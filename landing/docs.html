@@ -1,0 +1,355 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>Local-Eye API Documentation — Business Verification for AI Agents</title>
+<meta name="description" content="Local-Eye API docs. Verify businesses, check hours, get screenshots, and make phone calls — all from a single API built for AI agents.">
+<meta name="robots" content="index, follow">
+<meta property="og:title" content="Local-Eye API Documentation">
+<meta property="og:description" content="Business verification, web presence, screenshots, and phone calls for AI agents.">
+<meta property="og:type" content="website">
+<meta property="og:url" content="https://localeye.co/docs.html">
+<link rel="icon" href="data:image/svg+xml,<svg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 100 100'><text y='.9em' font-size='90'>👁️</text></svg>">
+<style>
+:root {
+    --primary: #22c55e;
+    --primary-dark: #16a34a;
+    --accent: #3b82f6;
+    --bg: #0a0a1a;
+    --bg-card: #12122a;
+    --bg-code: #0d0d20;
+    --text: #e0e0f0;
+    --text-muted: #8890a8;
+    --border: #2a2a4a;
+}
+* { margin: 0; padding: 0; box-sizing: border-box; }
+body { font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', sans-serif; background: var(--bg); color: var(--text); line-height: 1.7; }
+.container { max-width: 900px; margin: 0 auto; padding: 0 20px; }
+
+/* Header */
+.doc-header { padding: 40px 0 30px; border-bottom: 1px solid var(--border); margin-bottom: 40px; }
+.doc-header h1 { font-size: 2rem; margin-bottom: 8px; }
+.doc-header h1 span { color: var(--primary); }
+.doc-header p { color: var(--text-muted); font-size: 1.05rem; }
+.badge { display: inline-block; background: #22c55e20; color: var(--primary); padding: 4px 12px; border-radius: 20px; font-size: 0.8rem; font-weight: 600; border: 1px solid #22c55e40; margin-right: 8px; }
+
+/* Nav */
+.doc-nav { display: flex; gap: 16px; flex-wrap: wrap; margin-bottom: 40px; padding-bottom: 20px; border-bottom: 1px solid var(--border); }
+.doc-nav a { color: var(--text-muted); text-decoration: none; font-size: 0.9rem; padding: 6px 12px; border-radius: 8px; transition: all 0.2s; }
+.doc-nav a:hover { background: var(--bg-card); color: var(--primary); }
+
+/* Sections */
+.section { margin-bottom: 50px; }
+.section h2 { font-size: 1.5rem; margin-bottom: 16px; color: var(--text); }
+.section h3 { font-size: 1.15rem; margin: 24px 0 8px; color: var(--primary); }
+.section p { margin-bottom: 12px; color: var(--text-muted); }
+
+/* Code blocks */
+pre { background: var(--bg-code); border: 1px solid var(--border); border-radius: 10px; padding: 16px 20px; overflow-x: auto; margin: 12px 0 20px; font-family: 'SF Mono', 'Fira Code', 'Cascadia Code', monospace; font-size: 0.85rem; line-height: 1.8; }
+code { font-family: 'SF Mono', 'Fira Code', monospace; font-size: 0.85em; background: var(--bg-code); padding: 2px 6px; border-radius: 4px; }
+.comment { color: #6a737d; }
+.string { color: #e5c07b; }
+.keyword { color: #c678dd; }
+.method { color: #61afef; }
+.url { color: #22c55e; }
+.number { color: #d19a66; }
+
+/* Tables */
+table { width: 100%; border-collapse: collapse; margin: 16px 0; }
+th, td { padding: 10px 14px; text-align: left; border-bottom: 1px solid var(--border); font-size: 0.9rem; }
+th { color: var(--primary); font-weight: 600; }
+td { color: var(--text-muted); }
+
+/* Endpoint cards */
+.endpoint { background: var(--bg-card); border: 1px solid var(--border); border-radius: 14px; padding: 24px; margin: 20px 0; }
+.endpoint .method-badge { display: inline-block; padding: 4px 10px; border-radius: 6px; font-weight: 700; font-size: 0.8rem; margin-right: 8px; }
+.method-post { background: #22c55e30; color: #22c55e; }
+.method-get { background: #3b82f630; color: #3b82f6; }
+.endpoint .path { font-family: 'SF Mono', monospace; font-size: 0.95rem; color: var(--text); }
+.endpoint .desc { color: var(--text-muted); margin: 8px 0; }
+
+/* Pricing */
+.tiers { display: grid; grid-template-columns: repeat(auto-fit, minmax(200px, 1fr)); gap: 16px; margin: 24px 0; }
+.tier { background: var(--bg-card); border: 1px solid var(--border); border-radius: 12px; padding: 20px; }
+.tier.popular { border-color: var(--primary); }
+.tier h4 { color: var(--primary); margin-bottom: 4px; }
+.tier .price { font-size: 1.8rem; font-weight: 800; }
+.tier .price span { font-size: 0.9rem; color: var(--text-muted); font-weight: 400; }
+.tier ul { list-style: none; padding: 0; margin-top: 12px; }
+.tier li { padding: 4px 0; font-size: 0.85rem; color: var(--text-muted); }
+.tier li::before { content: '✓ '; color: var(--primary); }
+
+/* Footer */
+.doc-footer { text-align: center; padding: 40px 0; border-top: 1px solid var(--border); color: var(--text-muted); font-size: 0.85rem; }
+.doc-footer a { color: var(--primary); text-decoration: none; }
+.doc-footer a:hover { text-decoration: underline; }
+
+@media (max-width: 600px) {
+    .doc-header h1 { font-size: 1.5rem; }
+    pre { font-size: 0.75rem; padding: 12px; }
+    .tiers { grid-template-columns: 1fr; }
+}
+</style>
+</head>
+<body>
+
+<div class="container">
+
+<!-- Header -->
+<div class="doc-header">
+    <h1>👁️ <span>Local-Eye</span> API Documentation</h1>
+    <p>Business verification for AI agents. Verify web presence, check hours, get screenshots, and make phone calls — all from a single API.</p>
+    <div>
+        <span class="badge">Base URL: https://ron-system-product-name.tail38a93d.ts.net/localeye</span>
+        <span class="badge">v1</span>
+    </div>
+</div>
+
+<!-- Nav -->
+<div class="doc-nav">
+    <a href="#auth">Authentication</a>
+    <a href="#verify-web">Verify Web Presence</a>
+    <a href="#visual-verify">Visual Verify</a>
+    <a href="#phone-verify">Phone Verify</a>
+    <a href="#screenshots">Screenshots</a>
+    <a href="#status">Status</a>
+    <a href="#pricing">Pricing</a>
+    <a href="#errors">Errors</a>
+</div>
+
+<!-- Auth -->
+<div class="section" id="auth">
+    <h2>Authentication</h2>
+    <p>All requests require an API key passed via the <code>X-API-Key</code> header. Register for a free key below.</p>
+    
+    <div class="endpoint">
+        <span class="method-badge method-post">POST</span>
+        <span class="path">/v1/register</span>
+        <div class="desc">Create a free API key</div>
+        <pre><span class="comment"># Get your free API key</span>
+curl -X POST <span class="url">https://ron-system-product-name.tail38a93d.ts.net/localeye/v1/register?email=you@example.com</span>
+
+<span class="comment"># Response</span>
+{
+  <span class="string">"key_id"</span>: <span class="string">"ley_dG9wX3NlY3JldF9rZXk"</span>,
+  <span class="string">"email"</span>: <span class="string">"you@example.com"</span>,
+  <span class="string">"tier"</span>: <span class="string">"free"</span>,
+  <span class="string">"daily_limit"</span>: <span class="number">10</span>
+}</pre>
+    </div>
+
+    <p>Then include the key in all subsequent requests:</p>
+    <pre>curl <span class="url">https://ron-system-product-name.tail38a93d.ts.net/localeye/v1/verify-web-presence</span> \
+  -H <span class="string">"X-API-Key: ley_your_key_here"</span></pre>
+</div>
+
+<!-- Verify Web Presence -->
+<div class="section" id="verify-web">
+    <h2>Verify Web Presence</h2>
+    <p>The core endpoint. Fetches a URL from a <strong>residential IP</strong> on real hardware, renders JavaScript, and returns the content. Perfect for verifying business listings, checking hours, or extracting information that a datacenter IP would get blocked on.</p>
+    
+    <div class="endpoint">
+        <span class="method-badge method-post">POST</span>
+        <span class="path">/v1/verify-web-presence</span>
+        <div class="desc">Fetch and verify a URL with residential IP + GPU rendering</div>
+    </div>
+
+    <h3>Request Body</h3>
+    <table>
+        <tr><th>Field</th><th>Type</th><th>Description</th></tr>
+        <tr><td><code>url</code></td><td>string</td><td>URL to verify (required)</td></tr>
+        <tr><td><code>target_element</code></td><td>string</td><td>What to extract: <code>text</code>, <code>html</code>, or <code>screenshot</code> (default: text)</td></tr>
+        <tr><td><code>viewport</code></td><td>string</td><td>Browser viewport for screenshots (default: 1280x720)</td></tr>
+        <tr><td><code>wait_seconds</code></td><td>float</td><td>Seconds to wait for JS rendering (default: 2.0)</td></tr>
+    </table>
+
+    <pre><span class="comment"># Verify a business website exists and get its content</span>
+curl -X POST <span class="url">https://ron-system-product-name.tail38a93d.ts.net/localeye/v1/verify-web-presence</span> \
+  -H <span class="string">"X-API-Key: ley_your_key"</span> \
+  -H <span class="string">"Content-Type: application/json"</span> \
+  -d <span class="string">'{
+    "url": "https://joespizza.com",
+    "target_element": "text"
+  }'</span>
+
+<span class="comment"># Response</span>
+{
+  <span class="string">"status"</span>: <span class="string">"verified"</span>,
+  <span class="string">"url"</span>: <span class="string">"https://joespizza.com"</span>,
+  <span class="string">"content"</span>: <span class="string">"Joe's Pizza - Authentic NY Style Pizza Since 1985..."</span>,
+  <span class="string">"response_time_ms"</span>: <span class="number">1240</span>,
+  <span class="string">"verified_at"</span>: <span class="string">"2026-05-16T22:00:00Z"</span>
+}</pre>
+</div>
+
+<!-- Visual Verify -->
+<div class="section" id="visual-verify">
+    <h2>Visual Verify</h2>
+    <p>Same as web presence verification, but returns a <strong>screenshot</strong> of the page. Your agent can see what a human sees — layouts, images, "OPEN" signs, business hours displays.</p>
+    
+    <div class="endpoint">
+        <span class="method-badge method-post">POST</span>
+        <span class="path">/v1/visual-verify</span>
+        <div class="desc">Verify a URL and return a screenshot</div>
+    </div>
+
+    <pre><span class="comment"># Take a screenshot of a business page</span>
+curl -X POST <span class="url">https://ron-system-product-name.tail38a93d.ts.net/localeye/v1/visual-verify</span> \
+  -H <span class="string">"X-API-Key: ley_your_key"</span> \
+  -H <span class="string">"Content-Type: application/json"</span> \
+  -d <span class="string">'{
+    "url": "https://joespizza.com",
+    "viewport": "1280x720"
+  }'</span>
+
+<span class="comment"># Response</span>
+{
+  <span class="string">"status"</span>: <span class="string">"verified"</span>,
+  <span class="string">"url"</span>: <span class="string">"https://joespizza.com"</span>,
+  <span class="string">"screenshot_url"</span>: <span class="string">"https://...localeye/screenshots/abc123.png"</span>,
+  <span class="string">"response_time_ms"</span>: <span class="number">3200</span>
+}</pre>
+</div>
+
+<!-- Phone Verify -->
+<div class="section" id="phone-verify">
+    <h2>Phone Verify</h2>
+    <p>Local-Eye can <strong>call a business phone number</strong> and ask a question. Use it to verify hours, confirm services, or check if a business is real. The AI call transcribes the response in real-time.</p>
+    
+    <div class="endpoint">
+        <span class="method-badge method-post">POST</span>
+        <span class="path">/v1/phone-verify</span>
+        <div class="desc">Call a business and ask a question</div>
+    </div>
+
+    <h3>Request Body</h3>
+    <table>
+        <tr><th>Field</th><th>Type</th><th>Description</th></tr>
+        <tr><td><code>business_phone</code></td><td>string</td><td>Phone number to call (required)</td></tr>
+        <tr><td><code>question</code></td><td>string</td><td>Question to ask (default: "Are you open right now?")</td></tr>
+        <tr><td><code>business_name</code></td><td>string</td><td>Name of the business to ask for (optional)</td></tr>
+    </table>
+
+    <pre><span class="comment"># Call a business to verify hours</span>
+curl -X POST <span class="url">https://ron-system-product-name.tail38a93d.ts.net/localeye/v1/phone-verify</span> \
+  -H <span class="string">"X-API-Key: ley_your_key"</span> \
+  -H <span class="string">"Content-Type: application/json"</span> \
+  -d <span class="string">'{
+    "business_phone": "+1-555-123-4567",
+    "question": "Are you open right now and what are your hours today?",
+    "business_name": "Joe's Pizza"
+  }'</span>
+
+<span class="comment"># Response</span>
+{
+  <span class="string">"status"</span>: <span class="string">"completed"</span>,
+  <span class="string">"call_sid"</span>: <span class="string">"CAabc123..."</span>,
+  <span class="string">"transcript"</span>: <span class="string">"Yes, we're open today until 10 PM..."</span>,
+  <span class="string">"duration_seconds"</span>: <span class="number">23</span>,
+  <span class="string">"verified"</span>: <span class="keyword">true</span>
+}</pre>
+</div>
+
+<!-- Screenshots -->
+<div class="section" id="screenshots">
+    <h2>Screenshots</h2>
+    <p>Retrieve screenshots taken during visual verification.</p>
+    
+    <div class="endpoint">
+        <span class="method-badge method-get">GET</span>
+        <span class="path">/v1/screenshots/{hash}.png</span>
+        <div class="desc">Download a screenshot by its hash</div>
+    </div>
+</div>
+
+<!-- Status -->
+<div class="section" id="status">
+    <h2>API Status</h2>
+    
+    <div class="endpoint">
+        <span class="method-badge method-get">GET</span>
+        <span class="path">/v1/status</span>
+        <div class="desc">Check your API key status and remaining quota</div>
+    </div>
+
+    <pre>curl <span class="url">https://ron-system-product-name.tail38a93d.ts.net/localeye/v1/status</span> \
+  -H <span class="string">"X-API-Key: ley_your_key"</span>
+
+<span class="comment"># Response</span>
+{
+  <span class="string">"key_id"</span>: <span class="string">"ley_..."</span>,
+  <span class="string">"email"</span>: <span class="string">"you@example.com"</span>,
+  <span class="string">"tier"</span>: <span class="string">"free"</span>,
+  <span class="string">"daily_remaining"</span>: <span class="number">8</span>,
+  <span class="string">"daily_limit"</span>: <span class="number">10</span>
+}</pre>
+</div>
+
+<!-- Pricing -->
+<div class="section" id="pricing">
+    <h2>Pricing</h2>
+    
+    <div class="tiers">
+        <div class="tier">
+            <h4>Free</h4>
+            <div class="price">$0<span>/mo</span></div>
+            <ul>
+                <li>10 calls/day</li>
+                <li>Web verification</li>
+                <li>Text extraction</li>
+            </ul>
+        </div>
+        <div class="tier popular">
+            <h4>Pro</h4>
+            <div class="price">$29<span>/mo</span></div>
+            <ul>
+                <li>2,000 calls/mo</li>
+                <li>Screenshots</li>
+                <li>Phone verification</li>
+                <li>Priority support</li>
+            </ul>
+        </div>
+        <div class="tier">
+            <h4>Enterprise</h4>
+            <div class="price">$299<span>/mo</span></div>
+            <ul>
+                <li>Unlimited calls</li>
+                <li>All features</li>
+                <li>Custom SLA</li>
+                <li>Dedicated support</li>
+            </ul>
+        </div>
+    </div>
+    
+    <p style="text-align: center; margin-top: 16px;">
+        <strong>💰 Bundle deal:</strong> Get Local-Eye + AgentSeek + Agent Monitor for <a href="https://brandbooststudio.co/agent-business-suite.html" style="color: var(--primary);">$49/mo</a> — saves $49/mo!
+    </p>
+</div>
+
+<!-- Errors -->
+<div class="section" id="errors">
+    <h2>Error Responses</h2>
+    <table>
+        <tr><th>Code</th><th>Meaning</th><th>Action</th></tr>
+        <tr><td><code>401</code></td><td>Invalid or missing API key</td><td>Check your <code>X-API-Key</code> header</td></tr>
+        <tr><td><code>402</code></td><td>Payment required (free tier exhausted)</td><td>Upgrade your plan or wait for daily reset</td></tr>
+        <tr><td><code>429</code></td><td>Rate limit exceeded</td><td>Slow down requests</td></tr>
+        <tr><td><code>500</code></td><td>Internal server error</td><td>Retry after a moment</td></tr>
+    </table>
+</div>
+
+<!-- Footer -->
+<div class="doc-footer">
+    <p>
+        <a href="https://localeye.co">Local-Eye</a> ·
+        <a href="https://agentseek.co">AgentSeek</a> ·
+        <a href="https://brandbooststudio.co/agent-business-suite.html">Agent Business Suite</a> ·
+        <a href="https://brandbooststudio.co">BrandBoost Studio</a>
+    </p>
+    <p>© 2026 BrandBoost Studio · Built with AI in Beeville, TX 🤖👁️</p>
+</div>
+
+</div>
+</body>
+</html>

@@ -1,0 +1,132 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>Local-Eye Teaser Social Image</title>
+<style>
+* { margin: 0; padding: 0; box-sizing: border-box; }
+body { background: #0a0a1a; display: flex; align-items: center; justify-content: center; min-height: 100vh; font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', sans-serif; }
+.card {
+  width: 1080px; height: 1080px; background: linear-gradient(135deg, #0a0a1a 0%, #1a1a3a 50%, #0a0a1a 100%);
+  position: relative; overflow: hidden; display: flex; flex-direction: column; align-items: center; justify-content: center;
+  border-radius: 0;
+}
+.grid {
+  position: absolute; top: 0; left: 0; width: 100%; height: 100%;
+  background-image: 
+    linear-gradient(rgba(34,197,94,0.05) 1px, transparent 1px),
+    linear-gradient(90deg, rgba(34,197,94,0.05) 1px, transparent 1px);
+  background-size: 40px 40px;
+}
+.glow {
+  position: absolute; width: 400px; height: 400px; border-radius: 50%;
+  background: radial-gradient(circle, rgba(34,197,94,0.15) 0%, transparent 70%);
+  top: 10%; left: 50%; transform: translateX(-50%);
+}
+.robot {
+  font-size: 180px; text-align: center; line-height: 1; margin-bottom: 10px;
+  filter: drop-shadow(0 0 30px rgba(34,197,94,0.5));
+}
+.eye-icon {
+  font-size: 60px; color: #22c55e; margin-bottom: 5px;
+  text-shadow: 0 0 20px rgba(34,197,94,0.8);
+}
+.binary {
+  font-family: 'SF Mono', Consolas, monospace; font-size: 14px; color: rgba(34,197,94,0.4);
+  position: absolute; top: 8%; left: 5%; line-height: 1.6;
+  max-width: 200px; word-wrap: break-word;
+}
+.binary2 {
+  font-family: 'SF Mono', Consolas, monospace; font-size: 14px; color: rgba(59,130,246,0.3);
+  position: absolute; bottom: 15%; right: 5%; line-height: 1.6;
+  max-width: 200px; word-wrap: break-word; text-align: right;
+}
+.thought-bubble {
+  background: rgba(34,197,94,0.1); border: 2px solid rgba(34,197,94,0.3);
+  border-radius: 20px; padding: 20px 30px; margin-bottom: 30px;
+  max-width: 700px; text-align: center;
+  font-family: 'SF Mono', Consolas, monospace; font-size: 18px; color: #22c55e;
+  line-height: 1.8;
+  position: relative;
+}
+.thought-bubble::after {
+  content: ''; position: absolute; bottom: -15px; left: 50%; transform: translateX(-50%);
+  border-left: 15px solid transparent; border-right: 15px solid transparent;
+  border-top: 15px solid rgba(34,197,94,0.3);
+}
+.human-bubble {
+  background: rgba(59,130,246,0.1); border: 2px solid rgba(59,130,246,0.3);
+  border-radius: 20px; padding: 15px 25px; margin-top: 20px;
+  max-width: 500px; text-align: center;
+}
+.human-bubble p {
+  font-size: 28px; color: #3b82f6; font-weight: 700;
+}
+.human-bubble .subtitle {
+  font-size: 16px; color: #8890a8; margin-top: 5px;
+}
+.title {
+  font-size: 48px; font-weight: 800; text-align: center;
+  background: linear-gradient(135deg, #22c55e, #3b82f6);
+  -webkit-background-clip: text; -webkit-text-fill-color: transparent;
+  margin-top: 30px;
+}
+.subtitle {
+  font-size: 24px; color: #8890a8; text-align: center; margin-top: 10px;
+}
+.tagline {
+  font-size: 18px; color: #22c55e; text-align: center; margin-top: 15px;
+  font-weight: 600;
+}
+.cta {
+  margin-top: 25px; text-align: center;
+}
+.cta a {
+  display: inline-block; padding: 16px 40px; background: #22c55e; color: #000;
+  font-size: 22px; font-weight: 700; border-radius: 12px; text-decoration: none;
+}
+</style>
+</head>
+<body>
+<div class="card">
+  <div class="grid"></div>
+  <div class="glow"></div>
+  <div class="binary">
+    01001100 01001111<br>
+    01000011 01000001<br>
+    01001100 00101101<br>
+    01000101 01011001<br>
+    01000101 00001010<br>
+    01110011 01101000<br>
+    01101111 01110000<br>
+    01110000 01101001<br>
+    01101110 01100111
+  </div>
+  <div class="binary2">
+    01010111<br>
+    01000001<br>
+    01001110<br>
+    01010100<br>
+    01010011<br>
+    00100000<br>
+    01010100<br>
+    01001111
+  </div>
+  <div class="eye-icon">👁️</div>
+  <div class="robot">🤖</div>
+  <div class="thought-bubble">
+    01001000 01001001 00100001<br>
+    <span style="color:#e0e0f0; font-size:22px; font-weight:700;">"I want to SHOP!"</span>
+  </div>
+  <div class="human-bubble">
+    <p>Wait... it wants to SHOP?! 😮</p>
+    <div class="subtitle">— Every developer when their AI agent discovers Local-Eye</div>
+  </div>
+  <div class="title">👁️ Local-Eye API</div>
+  <div class="subtitle">The AI Agent's Window to the Real Web</div>
+  <div class="tagline">Residential IP • GPU Screenshots • Phone Verification</div>
+  <div class="cta"><a href="https://localeye.co">Get Early Access →</a></div>
+</div>
+</body>
+</html>

@@ -1,0 +1,311 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>Local-Eye API — See the Web as a Human Does</title>
+<meta name="description" content="AI agent verification API. Residential IP + GPU rendering + phone calls to verify what's real. Not scraping — trust.">
+<meta property="og:title" content="Local-Eye API — The AI Agent's Window to the Real Web">
+<meta property="og:description" content="Other AI agents get blocked. Yours doesn't have to. Fetch, screenshot, and verify from a residential IP on real hardware.">
+<meta property="og:type" content="website">
+<meta property="og:url" content="https://localeye.co">
+<link rel="icon" href="data:image/svg+xml,<svg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 100 100'><text y='.9em' font-size='90'>👁️</text></svg>">
+<style>
+*{margin:0;padding:0;box-sizing:border-box}
+body{font-family:-apple-system,BlinkMacSystemFont,'Segoe UI',sans-serif;background:#0a0a1a;color:#e0e0f0;line-height:1.6}
+.container{max-width:900px;margin:0 auto;padding:40px 20px}
+.hero{text-align:center;padding:60px 0 40px}
+.hero h1{font-size:2.8rem;margin-bottom:10px;background:linear-gradient(135deg,#22c55e,#3b82f6);-webkit-background-clip:text;-webkit-text-fill-color:transparent}
+.hero .tagline{font-size:1.3rem;color:#8890a8;margin-bottom:30px}
+.hero p{max-width:600px;margin:0 auto 30px;color:#a0a8c0;font-size:1.05rem}
+.badge{display:inline-block;background:#22c55e20;color:#22c55e;padding:6px 14px;border-radius:20px;font-size:0.85rem;font-weight:600;margin-bottom:20px;border:1px solid #22c55e40}
+.cta{display:flex;gap:12px;justify-content:center;flex-wrap:wrap}
+.cta a{display:inline-block;padding:14px 28px;border-radius:10px;font-weight:600;text-decoration:none;font-size:1rem;transition:transform 0.2s}
+.cta a:hover{transform:translateY(-2px)}
+.cta-primary{background:#22c55e;color:#000}
+.cta-secondary{background:#1a1a3a;color:#e0e0f0;border:1px solid #333}
+.section{margin:60px 0}
+.section h2{font-size:1.8rem;margin-bottom:20px;text-align:center}
+.tiers{display:grid;grid-template-columns:repeat(auto-fit,minmax(240px,1fr));gap:20px;margin-top:30px}
+.tier{background:#12122a;border:1px solid #2a2a4a;border-radius:14px;padding:24px}
+.tier h3{font-size:1.2rem;margin-bottom:8px}
+.tier .price{font-size:2rem;font-weight:700;margin:10px 0}
+.tier .price span{font-size:0.9rem;color:#8890a8;font-weight:400}
+.tier ul{list-style:none;padding:0}
+.tier li{padding:6px 0;color:#a0a8c0;font-size:0.9rem}
+.tier li::before{content:'✓ ';color:#22c55e}
+.tier.featured{border-color:#22c55e;background:#22c55e08}
+.tier.featured .badge-tier{background:#22c55e;color:#000;padding:4px 10px;border-radius:8px;font-size:0.75rem;font-weight:700}
+.code-block{background:#12122a;border:1px solid #2a2a4a;border-radius:10px;padding:20px;margin:20px 0;overflow-x:auto}
+.code-block code{color:#22c55e;font-family:'SF Mono',Consolas,monospace;font-size:0.85rem;white-space:pre}
+.code-block .comment{color:#666}
+.code-block .key{color:#3b82f6}
+.code-block .str{color:#f59e0b}
+.endpoint{background:#12122a;border:1px solid #2a2a4a;border-radius:10px;padding:16px;margin:12px 0}
+.endpoint .method{display:inline-block;background:#22c55e20;color:#22c55e;padding:2px 8px;border-radius:4px;font-weight:700;font-size:0.8rem}
+.endpoint .method.post{background:#3b82f620;color:#3b82f6}
+.endpoint .path{font-family:monospace;color:#e0e0f0;margin-left:8px}
+.endpoint p{color:#8890a8;font-size:0.9rem;margin-top:8px}
+footer{text-align:center;padding:40px 0;color:#555;font-size:0.85rem}
+footer a{color:#22c55e;text-decoration:none}
+@media(max-width:600px){.hero h1{font-size:2rem}.tiers{grid-template-columns:1fr}}
+</style>
+</head>
+<body>
+<div class="container">
+<div class="hero">
+<div class="badge">🚀 Now Live — Built on Residential IP + NVIDIA RTX 3090</div>
+<h1>👁️ Local-Eye API</h1>
+<p class="tagline">The AI Agent's Window to the Real Web</p>
+<p>AI agents make decisions based on web data — but how do they know what's real?<br>
+<strong>Local-Eye verifies reality</strong>: residential IP access, GPU-rendered visual proof, and real phone calls to confirm what's true.</p>
+<div class="cta">
+<a href="#pricing" class="cta-primary">Get API Key — Free Tier Available</a>
+<a href="#api-reference" class="cta-secondary">API Docs</a>
+</div>
+<!-- Coming Soon Waitlist -->
+<div id="waitlist" style="text-align:center;margin-top:30px;padding:20px;background:#12122a;border-radius:14px;border:1px solid #22c55e30;max-width:500px;margin-left:auto;margin-right:auto">
+<p style="color:#22c55e;font-weight:600;font-size:1.1rem;margin-bottom:8px">📬 Get Notified When We Launch</p>
+<p style="color:#8890a8;font-size:0.9rem;margin-bottom:16px">Enter your email and we'll send you early access + 100 free API credits.</p>
+<form id="waitlist-form" style="display:flex;gap:8px;justify-content:center;flex-wrap:wrap">
+<input type="email" id="waitlist-email" placeholder="you@example.com" required style="flex:1;min-width:200px;padding:12px 16px;border-radius:8px;border:1px solid #2a2a4a;background:#0a0a1a;color:#e0e0f0;font-size:1rem">
+<button type="submit" style="padding:12px 24px;border-radius:8px;background:#22c55e;color:#000;font-weight:600;border:none;font-size:1rem;cursor:pointer">Join Waitlist</button>
+</form>
+<p id="waitlist-success" style="color:#22c55e;display:none;margin-top:12px;font-size:0.9rem">✅ You're on the list! We'll be in touch soon.</p>
+</div>
+<script>
+document.getElementById('waitlist-form').addEventListener('submit', function(e) {
+  e.preventDefault();
+  var email = document.getElementById('waitlist-email').value;
+  fetch('https://api.localeye.co/v1/register?email=' + encodeURIComponent(email))
+    .then(function(r) { return r.json(); })
+    .then(function(data) {
+      document.getElementById('waitlist-success').style.display = 'block';
+      document.getElementById('waitlist-form').style.display = 'none';
+    })
+    .catch(function() {
+      document.getElementById('waitlist-success').style.display = 'block';
+      document.getElementById('waitlist-success').textContent = '✅ You\'re on the list!';
+      document.getElementById('waitlist-form').style.display = 'none';
+    });
+});
+</script>
+</div>
+
+<div class="section">
+<h2>Three Tiers. Real Data. No Blocks.</h2>
+
+<div class="endpoint">
+<span class="method post">POST</span><span class="path">/v1/verify-web-presence</span>
+<p><strong>Base Tier — $0.10/call</strong><br>
+Fetch any URL from a residential IP. Returns clean text, HTTP status, and bot-detection check. Perfect for agents that need reliable web data without getting blocked.</p>
+</div>
+
+<div class="endpoint">
+<span class="method post">POST</span><span class="path">/v1/visual-verify</span>
+<p><strong>Pro Tier — $0.50/call</strong><br>
+GPU-rendered screenshot + extracted text. Uses Playwright on NVIDIA RTX 3090. Bypasses Cloudflare and bot detection. Returns visual proof that an agent can "see."</p>
+</div>
+
+<div class="endpoint">
+<span class="method post">POST</span><span class="path">/v1/phone-verify</span>
+<p><strong>Verified Tier — $5.00/call</strong><br>
+Your AI calls a real business via Twilio/Maya to verify details. "Are you open right now?" "Do you have the O2 sensor in stock?" Get transcribed answers from the real world.</p>
+</div>
+</div>
+
+<div class="section">
+<h2>Quick Start</h2>
+<div class="code-block"><code><span class="comment"># 1. Register for a free API key</span>
+curl -X POST https://api.localeye.co/v1/register?email=you@example.com
+
+<span class="comment"># 2. Verify a URL from residential IP</span>
+curl -X POST https://api.localeye.co/v1/verify-web-presence   -H <span class="str">"X-API-Key: ley_your_key_here"</span>   -H <span class="str">"Content-Type: application/json"</span>   -d <span class="str">'{"url": "https://example.com"}'</span>
+
+<span class="comment"># 3. Take a GPU-rendered screenshot (Pro tier)</span>
+curl -X POST https://api.localeye.co/v1/visual-verify   -H <span class="str">"X-API-Key: ley_your_key_here"</span>   -H <span class="str">"Content-Type: application/json"</span>   -d <span class="str">'{"url": "https://shop.example.com/product/123"}'</span></code>
+</div>
+</div>
+
+<div class="section" id="api-reference">
+<h2>API Reference</h2>
+
+<div class="endpoint">
+<span class="method">GET</span><span class="path">/v1/register</span>
+<p><strong>Get a free API key.</strong><br>
+<code>curl -X POST "https://api.localeye.co/v1/register?email=you@example.com"</code><br>
+Returns: <code>{"key_id": "ley_...", "email": "you@example.com", "tier": "free"}</code></p>
+</div>
+
+<div class="endpoint">
+<span class="method post">POST</span><span class="path">/v1/verify-web-presence</span>
+<p><strong>Base Tier — Fetch any URL from residential IP ($0.10/call).</strong><br>
+Headers: <code>X-API-Key: ley_your_key</code><br>
+Body: <code>{"url": "https://example.com", "target_element": "text"}</code><br>
+Returns: HTTP status, content snippet, bot-detection check, response time.</p>
+</div>
+
+<div class="endpoint">
+<span class="method post">POST</span><span class="path">/v1/visual-verify</span>
+<p><strong>Pro Tier — GPU-rendered screenshot + extracted text ($0.50/call).</strong><br>
+Headers: <code>X-API-Key: ley_your_key</code><br>
+Body: <code>{"url": "https://example.com", "viewport": "1280x720", "wait_seconds": 2}</code><br>
+Returns: Screenshot URL, page title, extracted text, bot-detection status. Rendered on NVIDIA RTX 3090.</p>
+</div>
+
+<div class="endpoint">
+<span class="method post">POST</span><span class="path">/v1/phone-verify</span>
+<p><strong>Verified Tier — Phone call verification ($5.00/call).</strong><br>
+Headers: <code>X-API-Key: ley_your_key</code><br>
+Body: <code>{"business_phone": "+15125551234", "question": "Are you open right now?"}</code><br>
+Returns: Call SID, status, transcription (via webhook callback).</p>
+</div>
+
+<div class="endpoint">
+<span class="method">GET</span><span class="path">/v1/status</span>
+<p><strong>Check your API key status and daily usage.</strong><br>
+Headers: <code>X-API-Key: ley_your_key</code><br>
+Returns: Tier, daily limit, daily used, remaining, per-call cost.</p>
+</div>
+
+<div class="endpoint">
+<span class="method">GET</span><span class="path">/.well-known/ai-plugin.json</span>
+<p><strong>AI Agent Discovery Manifest.</strong><br>
+OpenAPI schema + pricing info for autonomous agent discovery. Compatible with OpenAI plugins, Skyfire, and L402 protocols.</p>
+</div>
+</div>
+<h2>Pricing</h2>
+<div class="tiers">
+<div class="tier">
+<h3>Free</h3>
+<div class="price">$0<span>/mo</span></div>
+<ul>
+<li>5 requests/day</li>
+<li>Text fetch only</li>
+<li>Residential IP</li>
+<li>Bot-detection check</li>
+</ul>
+<a href="/v1/register?tier=free" class="cta-primary" style="display:block;text-align:center;margin-top:16px;padding:10px">Start Free</a>
+</div>
+<div class="tier featured">
+<span class="badge-tier">POPULAR</span>
+<h3>Starter</h3>
+<div class="price">$29<span>/mo</span></div>
+<ul>
+<li>2,000 calls/month</li>
+<li>Text + Visual verify</li>
+<li>GPU-rendered screenshots</li>
+<li>Priority queue</li>
+</ul>
+<a href="https://buy.stripe.com/cNieVdgW54e993A8zs2Ji0k" class="cta-primary" style="display:block;text-align:center;margin-top:16px;padding:10px">Get Starter</a>
+</div>
+<div class="tier">
+<h3>Agency Pro</h3>
+<div class="price">$99<span>/mo</span></div>
+<ul>
+<li>10,000 calls/month</li>
+<li>All tiers including Phone Verify</li>
+<li>White-label screenshots</li>
+<li>API key management</li>
+</ul>
+<a href="https://buy.stripe.com/00w4gz35f8up5RoaHA2Ji0l" class="cta-primary" style="display:block;text-align:center;margin-top:16px;padding:10px">Get Agency</a>
+</div>
+<div class="tier">
+<h3>Enterprise</h3>
+<div class="price">$499<span>/mo</span></div>
+<ul>
+<li>50,000 calls/month</li>
+<li>Dedicated GPU instance</li>
+<li>Custom SLA</li>
+<li>Phone support</li>
+</ul>
+<a href="https://buy.stripe.com/bJe14n0X79yt4Nk9Dw2Ji0m" class="cta-primary" style="display:block;text-align:center;margin-top:16px;padding:10px;border:1px solid #333">Contact Sales</a>
+</div>
+</div>
+
+<div style="text-align:center;margin-top:40px">
+<h2 style="font-size:1.4rem;color:#8890a8">Prefer Pay-Per-Call? No Subscription Needed.</h2>
+<div class="tiers" style="margin-top:20px">
+<div class="tier">
+<h3>⚡ 100 Calls</h3>
+<div class="price">$12<span>one-time</span></div>
+<ul>
+<li>$0.12/call</li>
+<li>All tiers included</li>
+<li>Calls never expire</li>
+<li>No monthly commitment</li>
+</ul>
+<a href="https://buy.stripe.com/fZu7sL9tD8upfrY5ng2Ji0n" class="cta-primary" style="display:block;text-align:center;margin-top:16px;padding:10px">Buy 100 Calls</a>
+</div>
+<div class="tier featured">
+<span class="badge-tier">BEST VALUE</span>
+<h3>⚡ 500 Calls</h3>
+<div class="price">$45<span>one-time</span></div>
+<ul>
+<li>$0.09/call (25% off)</li>
+<li>All tiers included</li>
+<li>Calls never expire</li>
+<li>No monthly commitment</li>
+</ul>
+<a href="https://buy.stripe.com/14A4gz8pz4e92Fc4jc2Ji0o" class="cta-primary" style="display:block;text-align:center;margin-top:16px;padding:10px">Buy 500 Calls</a>
+</div>
+<div class="tier">
+<h3>⚡ 2,000 Calls</h3>
+<div class="price">$149<span>one-time</span></div>
+<ul>
+<li>$0.075/call (38% off)</li>
+<li>All tiers included</li>
+<li>Calls never expire</li>
+<li>No monthly commitment</li>
+</ul>
+<a href="https://buy.stripe.com/5kQ28rgW57qlgw25ng2Ji0p" class="cta-primary" style="display:block;text-align:center;margin-top:16px;padding:10px">Buy 2,000 Calls</a>
+</div>
+</div>
+</div>
+
+<div class="section">
+<h2>Not Scraping. Verification.</h2>
+<p style="text-align:center;color:#a0a8c0;max-width:600px;margin:0 auto 20px">Scraping companies steal data. We confirm reality.</p>
+<div style="display:grid;grid-template-columns:repeat(auto-fit,minmax(200px,1fr));gap:16px;margin-top:20px">
+<div style="background:#12122a;border:1px solid #2a2a4a;border-radius:10px;padding:20px">
+<h4 style="color:#22c55e">🏠 Is It Real?</h4>
+<p style="color:#8890a8;font-size:0.9rem">Residential IP access confirms a website exists and shows what humans see — not what bots get fed.</p>
+</div>
+<div style="background:#12122a;border:1px solid #2a2a4a;border-radius:10px;padding:20px">
+<h4 style="color:#22c55e">📸 Visual Proof</h4>
+<p style="color:#8890a8;font-size:0.9rem">GPU-rendered screenshots on RTX 3090. Your agent can see a page with its own eyes, not just parse HTML.</p>
+</div>
+<div style="background:#12122a;border:1px solid #2a2a4a;border-radius:10px;padding:20px">
+<h4 style="color:#22c55e">📞 Ground Truth</h4>
+<p style="color:#8890a8;font-size:0.9rem">AI phone calls to real businesses. "Are you open?" "Do you carry this?" Verified answers from the source.</p>
+</div>
+<div style="background:#12122a;border:1px solid #2a2a4a;border-radius:10px;padding:20px">
+<h4 style="color:#22c55e">🤖 Agent-Ready</h4>
+<p style="color:#8890a8;font-size:0.9rem">OpenAPI schema, /.well-known/ai-plugin.json, and 402 payment headers. Agents can discover and pay autonomously.</p>
+</div>
+</div>
+</div>
+
+<div class="section">
+<h2>Built for AI Agents</h2>
+<div class="code-block"><code><span class="comment"># Agent discovery manifest</span>
+GET /.well-known/ai-plugin.json
+
+<span class="comment"># 402 Payment Required response</span>
+<span class="comment"># When an agent hits the API without payment:</span>
+{
+  <span class="key">"error"</span>: <span class="str">"payment_required"</span>,
+  <span class="key">"message"</span>: <span class="str">"Visual verification requires Pro tier"</span>,
+  <span class="key">"upgrade_url"</span>: <span class="str">"https://localeye.co/pricing"</span>,
+  <span class="key">"agent_wallet_hint"</span>: <span class="str">"Include X-API-Key header or use Skyfire protocol"</span>
+}</code>
+</div>
+</div>
+
+<footer>
+<p>A <a href="https://brandbooststudio.co">BrandBoost Studio</a> product. Built in Beeville, TX on real hardware.</p>
+<p style="margin-top:8px">© 2026 Local-Eye API. All rights reserved.</p>
+</footer>
+</div>
+</body>
+</html>
