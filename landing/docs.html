@@ -101,7 +101,7 @@ td { color: var(--text-muted); }
     <h1>👁️ <span>Local-Eye</span> API Documentation</h1>
     <p>Business verification for AI agents. Verify web presence, check hours, get screenshots, and make phone calls — all from a single API.</p>
     <div>
-        <span class="badge">Base URL: https://ron-system-product-name.tail38a93d.ts.net/localeye</span>
+        <span class="badge">Base URL: https://localeye.co</span>
         <span class="badge">v1</span>
     </div>
 </div>
@@ -128,7 +128,7 @@ td { color: var(--text-muted); }
         <span class="path">/v1/register</span>
         <div class="desc">Create a free API key</div>
         <pre><span class="comment"># Get your free API key</span>
-curl -X POST <span class="url">https://ron-system-product-name.tail38a93d.ts.net/localeye/v1/register?email=you@example.com</span>
+curl -X POST <span class="url">https://localeye.co/v1/register?email=you@example.com</span>
 
 <span class="comment"># Response</span>
 {
@@ -140,7 +140,7 @@ curl -X POST <span class="url">https://ron-system-product-name.tail38a93d.ts.net
     </div>
 
     <p>Then include the key in all subsequent requests:</p>
-    <pre>curl <span class="url">https://ron-system-product-name.tail38a93d.ts.net/localeye/v1/verify-web-presence</span> \
+    <pre>curl <span class="url">https://localeye.co/v1/verify-web-presence</span> \
   -H <span class="string">"X-API-Key: ley_your_key_here"</span></pre>
 </div>
 
@@ -165,7 +165,7 @@ curl -X POST <span class="url">https://ron-system-product-name.tail38a93d.ts.net
     </table>
 
     <pre><span class="comment"># Verify a business website exists and get its content</span>
-curl -X POST <span class="url">https://ron-system-product-name.tail38a93d.ts.net/localeye/v1/verify-web-presence</span> \
+curl -X POST <span class="url">https://localeye.co/v1/verify-web-presence</span> \
   -H <span class="string">"X-API-Key: ley_your_key"</span> \
   -H <span class="string">"Content-Type: application/json"</span> \
   -d <span class="string">'{
@@ -195,7 +195,7 @@ curl -X POST <span class="url">https://ron-system-product-name.tail38a93d.ts.net
     </div>
 
     <pre><span class="comment"># Take a screenshot of a business page</span>
-curl -X POST <span class="url">https://ron-system-product-name.tail38a93d.ts.net/localeye/v1/visual-verify</span> \
+curl -X POST <span class="url">https://localeye.co/v1/visual-verify</span> \
   -H <span class="string">"X-API-Key: ley_your_key"</span> \
   -H <span class="string">"Content-Type: application/json"</span> \
   -d <span class="string">'{
@@ -232,7 +232,7 @@ curl -X POST <span class="url">https://ron-system-product-name.tail38a93d.ts.net
     </table>
 
     <pre><span class="comment"># Call a business to verify hours</span>
-curl -X POST <span class="url">https://ron-system-product-name.tail38a93d.ts.net/localeye/v1/phone-verify</span> \
+curl -X POST <span class="url">https://localeye.co/v1/phone-verify</span> \
   -H <span class="string">"X-API-Key: ley_your_key"</span> \
   -H <span class="string">"Content-Type: application/json"</span> \
   -d <span class="string">'{
@@ -273,7 +273,7 @@ curl -X POST <span class="url">https://ron-system-product-name.tail38a93d.ts.net
         <div class="desc">Check your API key status and remaining quota</div>
     </div>
 
-    <pre>curl <span class="url">https://ron-system-product-name.tail38a93d.ts.net/localeye/v1/status</span> \
+    <pre>curl <span class="url">https://localeye.co/v1/status</span> \
   -H <span class="string">"X-API-Key: ley_your_key"</span>
 
 <span class="comment"># Response</span>

@@ -40,7 +40,7 @@ OLLAMA_BASE_URL = os.getenv("OLLAMA_BASE_URL", "http://localhost:11434")
 
 # Telegram notifications
 TELEGRAM_BOT_TOKEN = os.getenv("TELEGRAM_BOT_TOKEN", "")
-TELEGRAM_CHAT_ID = os.getenv("TELEGRAM_CHAT_ID", "5176561592")  # Ron's Telegram ID
+TELEGRAM_CHAT_ID = os.getenv("TELEGRAM_CHAT_ID", "")  # Set via .env
 ADMIN_API_KEY = os.getenv("ADMIN_API_KEY", "")  # Set via .env
 
 # Skyfire integration
