@@ -56,7 +56,7 @@ curl "https://localeye.co/v1/verify-business?query=starbucks+near+me" \
 - **Local-Eye** — Verify real-world data
 - [Agent Monitor](https://brandbooststudio.co/agent-business-suite.html#monitor) — Track uptime
 
-Bundle all three for **$49/mo** → [agentseek.co](https://agentseek.co)
+Bundle all three for **$79/mo** → [agentseek.co](https://agentseek.co)
 
 ## 📄 License
 
