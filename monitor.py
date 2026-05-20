@@ -2,6 +2,7 @@
 """Local-Eye API monitoring: abuse alerts + weekly reports."""
 
 import json
+import os
 import sqlite3
 import time
 from datetime import datetime, timezone, timedelta

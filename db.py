@@ -57,6 +57,17 @@ CREATE TABLE IF NOT EXISTS phone_verifications (
     completed_at REAL,
     FOREIGN KEY (key_id) REFERENCES api_keys(key_id)
 );
+
+CREATE TABLE IF NOT EXISTS scam_reports (
+    id INTEGER PRIMARY KEY AUTOINCREMENT,
+    phone TEXT NOT NULL,
+    claimed_company TEXT,
+    scam_score INTEGER,
+    reporter_ip TEXT,
+    reporter_key_id TEXT,
+    reasons TEXT,
+    created_at REAL
+);
 """
 
 async def init_db():
@@ -193,8 +204,35 @@ async def get_phone_verification(call_sid: str) -> dict | None:
                 }
     return None
 
+async def create_scam_report(phone: str, claimed_company: str = None, scam_score: int = None, reporter_ip: str = None, reporter_key_id: str = None, reasons: str = None):
+    created_at = time.time()
+    async with aiosqlite.connect(DB_PATH) as db:
+        await db.execute(
+            "INSERT INTO scam_reports (phone, claimed_company, scam_score, reporter_ip, reporter_key_id, reasons, created_at) VALUES (?, ?, ?, ?, ?, ?, ?)",
+            (phone, claimed_company, scam_score, reporter_ip, reporter_key_id, reasons, created_at),
+        )
+        await db.commit()
+
+async def get_scam_reports(phone: str, limit: int = 10):
+    async with aiosqlite.connect(DB_PATH) as db:
+        async with db.execute(
+            "SELECT phone, claimed_company, scam_score, reasons, created_at FROM scam_reports WHERE phone = ? ORDER BY created_at DESC LIMIT ?",
+            (phone, limit),
+        ) as cursor:
+            rows = await cursor.fetchall()
+            return [{"phone": r[0], "claimed_company": r[1], "scam_score": r[2], "reasons": r[3], "reported_at": r[4]} for r in rows]
+
+async def get_scam_report_count(phone: str) -> int:
+    async with aiosqlite.connect(DB_PATH) as db:
+        async with db.execute(
+            "SELECT COUNT(*) FROM scam_reports WHERE phone = ?",
+            (phone,),
+        ) as cursor:
+            row = await cursor.fetchone()
+            return row[0] if row else 0
+
 TIER_LIMITS = {
-    "free": {"daily": 5, "monthly": 150, "per_call": 0.00},
+    "free": {"daily": 50, "monthly": 150, "per_call": 0.00},
     "starter": {"daily": 67, "monthly": 2000, "per_call": 0.10},
     "pro": {"daily": 334, "monthly": 10000, "per_call": 0.50},
     "agency": {"daily": 1667, "monthly": 50000, "per_call": 0.25},
