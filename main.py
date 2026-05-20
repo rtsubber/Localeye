@@ -9,6 +9,7 @@ Tiers:
   - Verified ($5.00/call): Phone call verification via Twilio/Maya
 """
 import os
+import secrets
 import ipaddress
 import json
 import time
@@ -26,7 +27,7 @@ from fastapi.middleware.cors import CORSMiddleware
 from fastapi.responses import HTMLResponse, JSONResponse, FileResponse
 from pydantic import BaseModel, Field
 
-from db import init_db, create_api_key, validate_key, check_rate_limit, log_usage, TIER_LIMITS, create_phone_verification, update_phone_verification, get_phone_verification as db_get_phone_verification
+from db import init_db, create_api_key, validate_key, check_rate_limit, log_usage, TIER_LIMITS, create_phone_verification, update_phone_verification, get_phone_verification as db_get_phone_verification, create_scam_report, get_scam_reports, get_scam_report_count
 
 # --- Config ---
 STRIPE_SECRET_KEY = os.getenv("STRIPE_SECRET_KEY", "")
@@ -62,6 +63,56 @@ SCREENSHOT_DIR.mkdir(exist_ok=True)
 
 # --- In-memory rate limiters ---
 _registration_tracker: dict[str, list[float]] = defaultdict(list)
+
+# --- Playground session tokens ---
+# Short-lived signed tokens for playground use. Max 5 uses, 1 hour TTL.
+_PLAYGROUND_TOKENS: dict[str, dict] = {}  # token -> {"uses": int, "created": float, "ip": str}
+_PLAYGROUND_MAX_USES = 5
+_PLAYGROUND_TTL = 3600  # 1 hour
+_PLAYGROUND_IP_HOURLY_LIMIT = 30  # max playground verifications per IP per hour
+_PLAYGROUND_IP_TRACKER: dict[str, list[float]] = defaultdict(list)
+
+import hmac, base64
+import re as _re
+_PLAYGROUND_SECRET = os.getenv("PLAYGROUND_SECRET", hashlib.sha256(os.urandom(32)).hexdigest())
+
+def _create_playground_token(ip: str) -> str:
+    """Create a signed playground token valid for 5 uses, 1 hour."""
+    token = secrets.token_hex(16)
+    sig = hmac.new(_PLAYGROUND_SECRET.encode(), token.encode(), hashlib.sha256).hexdigest()[:16]
+    signed_token = f"{token}.{sig}"
+    _PLAYGROUND_TOKENS[signed_token] = {"uses": 0, "created": time.time(), "ip": ip}
+    return signed_token
+
+def _validate_playground_token(token: str, ip: str) -> bool:
+    """Validate and consume a playground token. Returns True if valid."""
+    if "." not in token:
+        return False
+    token_id, sig = token.rsplit(".", 1)
+    expected_sig = hmac.new(_PLAYGROUND_SECRET.encode(), token_id.encode(), hashlib.sha256).hexdigest()[:16]
+    if not hmac.compare_digest(sig, expected_sig):
+        return False
+    data = _PLAYGROUND_TOKENS.get(token)
+    if not data:
+        return False
+    if time.time() - data["created"] > _PLAYGROUND_TTL:
+        _PLAYGROUND_TOKENS.pop(token, None)
+        return False
+    if data["uses"] >= _PLAYGROUND_MAX_USES:
+        return False
+    data["uses"] += 1
+    return True
+
+def _check_playground_ip_rate(ip: str) -> bool:
+    """Check if IP is within hourly playground rate limit."""
+    now = time.time()
+    timestamps = _PLAYGROUND_IP_TRACKER.get(ip, [])
+    timestamps = [t for t in timestamps if now - t < 3600]
+    _PLAYGROUND_IP_TRACKER[ip] = timestamps
+    if len(timestamps) >= _PLAYGROUND_IP_HOURLY_LIMIT:
+        return False
+    timestamps.append(now)
+    return True
 
 # --- Skyfire JWKS cache ---
 _skyfire_jwks_cache: dict | None = None
@@ -234,6 +285,17 @@ class PhoneVerifyRequest(BaseModel):
     question: str = Field(default="Are you open right now?", description="Question for the business")
     business_name: str = Field(default="", description="Name of the business to ask for")
 
+class PhoneVetRequest(BaseModel):
+    phone: str = Field(..., description="Phone number to vet (E.164 format preferred, e.g. +18005551234)")
+    claimed_company: str = Field(default="", description="Company they claim to represent (optional, enables cross-reference)")
+    claimed_url: str = Field(default="", description="Company website URL for number cross-reference (optional)")
+
+class ScamReportRequest(BaseModel):
+    phone: str = Field(..., description="Phone number to report as scam")
+    claimed_company: str = Field(default="", description="Company they claimed to represent")
+    scam_score: int = Field(default=0, description="Scam score from phone/vet check (optional)")
+    reasons: str = Field(default="", description="Why you believe this is a scam (optional)")
+
 class APIKeyResponse(BaseModel):
     key_id: str
     email: str
@@ -389,7 +451,15 @@ def _check_registration_rate(client_ip: str) -> bool:
 # --- Health / Landing (public) ---
 @app.get("/", response_class=HTMLResponse)
 async def landing_page():
-    return LANDING_HTML
+    from fastapi.responses import HTMLResponse as HR
+    return HR(content=LANDING_HTML, headers={"Cache-Control": "no-cache, no-store, must-revalidate", "Pragma": "no-cache", "Expires": "0"})
+
+@app.get("/phone-vet", response_class=HTMLResponse)
+async def phone_vet_page():
+    """Standalone phone scam checker page."""
+    from fastapi.responses import HTMLResponse as HR
+    page = (Path(__file__).parent / "phone_vet.html").read_text()
+    return HR(content=page, headers={"Cache-Control": "no-cache, no-store, must-revalidate", "Pragma": "no-cache", "Expires": "0"})
 
 # --- Protected Docs (require API key) ---
 @app.get("/docs", include_in_schema=False)
@@ -510,6 +580,316 @@ def _build_openapi(tier: str = "free"):
 
     return schema
 
+# --- Playground Endpoints ---
+PLAYGROUND_DEMO_KEY = "ley_4fcea73baf61038b48e00e556b9f72e0"  # Dedicated playground key
+
+@app.post("/v1/playground/token")
+async def playground_token(request: Request):
+    """Generate a short-lived signed token for playground use.
+    
+    Each token is valid for 5 verifications and 1 hour.
+    IP-based rate limit: 10 tokens per IP per hour.
+    """
+    client_ip = request.headers.get("x-forwarded-for", request.client.host if request.client else "unknown").split(",")[0].strip()
+    
+    if not _check_playground_ip_rate(client_ip):
+        raise HTTPException(status_code=429, detail=json.dumps({
+            "error": "rate_limit_exceeded",
+            "message": "Playground rate limit reached. Please sign up for a free API key for continued use.",
+            "signup_url": "https://brandbooststudio.co/agent-business-suite.html#signup",
+        }))
+    
+    token = _create_playground_token(client_ip)
+    return {"token": token, "max_uses": _PLAYGROUND_MAX_USES, "ttl_seconds": _PLAYGROUND_TTL}
+
+
+@app.post("/v1/playground/verify")
+async def playground_verify(request: Request, body: VerifyRequest):
+    """Playground-only verify endpoint.
+    
+    Requires a valid playground token. Returns simplified response.
+    Rate limited: 5 uses per token, 10 requests per IP per hour.
+    Phone verification and screenshots NOT accessible from this endpoint.
+    """
+    token = request.headers.get("X-Playground-Token", "")
+    client_ip = request.headers.get("x-forwarded-for", request.client.host if request.client else "unknown").split(",")[0].strip()
+    
+    if not token or not _validate_playground_token(token, client_ip):
+        raise HTTPException(status_code=401, detail=json.dumps({
+            "error": "invalid_token",
+            "message": "Playground token expired or invalid. Refresh the page to get a new token.",
+            "signup_url": "https://brandbooststudio.co/agent-business-suite.html#signup",
+        }))
+    
+    # Use the dedicated playground key for the actual API call
+    key_data = await validate_key(PLAYGROUND_DEMO_KEY)
+    if not key_data:
+        raise HTTPException(status_code=401, detail="Playground unavailable. Please try again later.")
+    
+    tier = key_data.get("tier", "free")
+    limits = TIER_LIMITS.get(tier, TIER_LIMITS["free"])
+    
+    if not await check_rate_limit(key_data["key_id"], limits["daily"]):
+        raise HTTPException(status_code=429, detail=json.dumps({
+            "error": "playground_limit_reached",
+            "message": "Playground daily limit reached. Get your own free API key for continued use.",
+            "signup_url": "https://brandbooststudio.co/agent-business-suite.html#signup",
+        }))
+    
+    # SSRF protection
+    blocked, reason = is_url_blocked(body.url)
+    if blocked:
+        raise HTTPException(status_code=400, detail=json.dumps({
+            "error": "url_blocked",
+            "message": f"URL not allowed: {reason}",
+        }))
+    
+    # Perform the actual verification
+    start = time.time()
+    try:
+        async with httpx.AsyncClient(
+            follow_redirects=True,
+            timeout=30.0,
+            headers={
+                "User-Agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/125.0.0.0 Safari/537.36",
+                "Accept": "text/html,application/xhtml+xml,application/xml;q=0.9,*/*;q=0.8",
+                "Accept-Language": "en-US,en;q=0.9",
+            },
+        ) as client:
+            resp = await client.get(body.url)
+        
+        elapsed = (time.time() - start) * 1000
+        text = resp.text
+        is_bot_blocked = any(kw in text.lower() for kw in ["cloudflare", "captcha", "access denied", "bot detection", "please verify you are human"])
+        
+        await log_usage(key_data["key_id"], "playground_verify", body.url, resp.status_code, elapsed)
+        
+        # Return simplified response (no HTML content, limited snippet)
+        result = {
+            "status": "verified" if not is_bot_blocked else "likely_blocked",
+            "http_status": resp.status_code,
+            "content_type": resp.headers.get("content-type", ""),
+            "content_length": len(text),
+            "is_bot_blocked": is_bot_blocked,
+            "content_snippet": text[:1500],  # Truncated for playground
+            "response_time_ms": round(elapsed, 1),
+            "rendered_on": "residential-ip",
+            "tier": "base",
+        }
+        return result
+    
+    except httpx.RequestError as e:
+        raise HTTPException(status_code=502, detail=f"Failed to fetch URL: {str(e)}")
+
+
+@app.post("/v1/playground/phone-vet")
+async def playground_phone_vet(request: Request, body: PhoneVetRequest):
+    """Playground-only phone vet endpoint.
+    
+    Requires a valid playground token. Returns scam detection results.
+    Rate limited: 5 uses per token, 10 requests per IP per hour.
+    """
+    token = request.headers.get("X-Playground-Token", "")
+    client_ip = request.headers.get("x-forwarded-for", request.client.host if request.client else "unknown").split(",")[0].strip()
+    
+    if not token or not _validate_playground_token(token, client_ip):
+        raise HTTPException(status_code=401, detail=json.dumps({
+            "error": "invalid_token",
+            "message": "Playground token expired or invalid. Refresh the page to get a new token.",
+            "signup_url": "https://brandbooststudio.co/agent-business-suite.html#signup",
+        }))
+    
+    # Use the dedicated playground key
+    key_data = await validate_key(PLAYGROUND_DEMO_KEY)
+    if not key_data:
+        raise HTTPException(status_code=401, detail="Playground unavailable. Please try again later.")
+    
+    tier = key_data.get("tier", "free")
+    limits = TIER_LIMITS.get(tier, TIER_LIMITS["free"])
+    
+    if not await check_rate_limit(key_data["key_id"], limits["daily"]):
+        raise HTTPException(status_code=429, detail=json.dumps({
+            "error": "playground_limit_reached",
+            "message": "Playground daily limit reached. Get your own free API key for continued use.",
+            "signup_url": "https://brandbooststudio.co/agent-business-suite.html#signup",
+        }))
+    
+    # Call the main phone_vet logic by constructing a proper call
+    start = time.time()
+    phone = body.phone.strip()
+    # Normalize phone number - add +1 for US numbers without country code
+    if not phone.startswith('+'):
+        digits = _re.sub(r'[^0-9]', '', phone)
+        if len(digits) == 11 and digits.startswith('1'):
+            phone = '+' + digits
+        elif len(digits) == 10:
+            phone = '+1' + digits
+        else:
+            phone = '+' + digits
+    
+    results = {
+        "phone": phone,
+        "carrier": None,
+        "line_type": None,
+        "location": None,
+        "country_code": None,
+        "claimed_company": body.claimed_company or None,
+        "company_official_numbers": [],
+        "number_match": None,
+        "scam_likelihood": "unknown",
+        "scam_score": 0,
+        "reasons": [],
+        "vetted_at": time.strftime("%Y-%m-%dT%H:%M:%SZ", time.gmtime()),
+    }
+    
+    # Step 1: Twilio Lookup
+    try:
+        auth = base64.b64encode(f"{TWILIO_ACCOUNT_SID}:{TWILIO_AUTH_TOKEN}".encode()).decode()
+        async with httpx.AsyncClient() as http:
+            resp = await http.get(
+                f"https://lookups.twilio.com/v1/PhoneNumbers/{phone}",
+                params={"Type": "carrier"},
+                headers={"Authorization": f"Basic {auth}"},
+                timeout=10
+            )
+        if resp.status_code == 200:
+            data = resp.json()
+            carrier = data.get("carrier", {})
+            results["carrier"] = carrier.get("name")
+            results["line_type"] = carrier.get("type")
+            results["country_code"] = data.get("country_code")
+            results["national_format"] = data.get("national_format", phone)
+            if carrier.get("type") == "voip":
+                results["reasons"].append("VoIP number (common for scams, rarely used by major businesses)")
+                results["scam_score"] += 25
+            elif carrier.get("type") == "landline":
+                results["reasons"].append("Landline number (more typical for businesses)")
+            elif carrier.get("type") == "mobile":
+                results["reasons"].append("Mobile number (less common for corporate businesses)")
+                results["scam_score"] += 15
+            # Flag suspicious carriers for major companies
+            carrier_name = (carrier.get("name") or "").lower()
+            suspicious_carriers = ["onvoy", "bandwidth", "inteliquent", "thinq", "vitelity", "voip innovate"]
+            if any(sc in carrier_name for sc in suspicious_carriers) and body.claimed_company:
+                results["reasons"].append(f"⚠️ Carrier '{carrier.get('name')}' is a wholesale/VoIP provider — major companies like {body.claimed_company} typically use major carriers (AT&T, Verizon, etc.)")
+                results["scam_score"] += 15
+            if not carrier.get("name") and body.claimed_company:
+                results["reasons"].append(f"No carrier info found (unusual for a major company like {body.claimed_company})")
+                results["scam_score"] += 20
+    except Exception as e:
+        results["reasons"].append(f"Carrier lookup failed: {str(e)[:100]}")
+    
+    # Step 2: Website cross-reference
+    if body.claimed_company and body.claimed_url:
+        try:
+            blocked_url, reason = is_url_blocked(body.claimed_url)
+            if blocked_url:
+                results["reasons"].append(f"URL not allowed for cross-reference: {reason}")
+            else:
+                async with httpx.AsyncClient() as http:
+                    resp = await http.get(
+                        body.claimed_url,
+                        headers={"User-Agent": "Local-Eye/1.0 (Scam Verification)"},
+                        timeout=15,
+                        follow_redirects=True
+                    )
+                if resp.status_code == 200:
+                    phone_patterns = _re.findall(
+                        r'(?:\\+?1[-.\\s]?)?(?:\\([0-9]{3}\\)|[0-9]{3})[-.\\s]?[0-9]{3}[-.\\s]?[0-9]{4}',
+                        resp.text
+                    )
+                    found_numbers = []
+                    for p in phone_patterns:
+                        normalized = _re.sub(r'[^0-9+]', '', p)
+                        if not normalized.startswith('+') and normalized.startswith('1') and len(normalized) == 11:
+                            normalized = '+' + normalized
+                        elif len(normalized) == 10:
+                            normalized = '+1' + normalized
+                        found_numbers.append(normalized)
+                    results["company_official_numbers"] = list(set(found_numbers))[:10]
+                    phone_digits = _re.sub(r'[^0-9]', '', phone)
+                    matches = [n for n in found_numbers if _re.sub(r'[^0-9]', '', n) == phone_digits]
+                    if matches:
+                        results["number_match"] = True
+                        results["reasons"].append(f"✅ Number found on {body.claimed_company}'s official website")
+                        results["scam_score"] -= 50
+                    else:
+                        results["number_match"] = False
+                        results["reasons"].append(f"❌ Number NOT found on {body.claimed_company}'s official website ({len(found_numbers)} numbers found)")
+                        results["scam_score"] += 40
+        except Exception as e:
+            results["reasons"].append(f"Website cross-reference failed: {str(e)[:100]}")
+    elif body.claimed_company and not body.claimed_url:
+        # Auto-construct URL from company name for cross-reference
+        company_slug = body.claimed_company.lower().replace(" ", "").replace("&", "and").replace(".", "").replace("'", "")
+        auto_url = f"https://www.{company_slug}.com"
+        try:
+            async with httpx.AsyncClient() as http:
+                resp = await http.get(
+                    auto_url,
+                    headers={"User-Agent": "Local-Eye/1.0 (Scam Verification)"},
+                    timeout=10,
+                    follow_redirects=True
+                )
+            if resp.status_code == 200:
+                results["reasons"].append(f"Auto-checked {auto_url} (inferred from company name)")
+                phone_patterns = _re.findall(
+                    r'(?:\\+?1[-.\\s]?)?(?:\\([0-9]{3}\\)|[0-9]{3})[-.\\s]?[0-9]{3}[-.\\s]?[0-9]{4}',
+                    resp.text
+                )
+                found_numbers = []
+                for p in phone_patterns:
+                    normalized = _re.sub(r'[^0-9+]', '', p)
+                    if not normalized.startswith('+') and normalized.startswith('1') and len(normalized) == 11:
+                        normalized = '+' + normalized
+                    elif len(normalized) == 10:
+                        normalized = '+1' + normalized
+                    found_numbers.append(normalized)
+                results["company_official_numbers"] = list(set(found_numbers))[:10]
+                phone_digits = _re.sub(r'[^0-9]', '', phone)
+                matches = [n for n in found_numbers if _re.sub(r'[^0-9]', '', n) == phone_digits]
+                if matches:
+                    results["number_match"] = True
+                    results["reasons"].append(f"✅ Number found on {body.claimed_company}'s website")
+                    results["scam_score"] -= 50
+                else:
+                    results["number_match"] = False
+                    results["reasons"].append(f"❌ Number NOT found on {body.claimed_company}'s website ({len(found_numbers)} numbers found)")
+                    results["scam_score"] += 40
+            else:
+                results["reasons"].append(f"Could not auto-reach {auto_url} — provide claimed_url for stronger verification")
+        except Exception as e:
+            results["reasons"].append(f"Auto-URL check failed: provide claimed_url for stronger verification")
+    
+    # Step 3: Check scam reports from other users
+    report_count = await get_scam_report_count(phone)
+    results["scam_reports"] = report_count
+    if report_count > 0:
+        report_boost = min(25, report_count * 5)  # 5 points per report, max 25
+        results["scam_score"] += report_boost
+        results["reasons"].append(f"⚠️ This number has been reported as scam {report_count} time(s) by other users")
+    
+    # Step 4: Final score
+    score = max(0, min(100, results["scam_score"]))
+    results["scam_score"] = score
+    if score >= 60:
+        results["scam_likelihood"] = "high"
+    elif score >= 30:
+        results["scam_likelihood"] = "medium"
+    elif score > 0:
+        results["scam_likelihood"] = "low"
+    else:
+        results["scam_likelihood"] = "unlikely"
+    if results.get("number_match") is True:
+        results["scam_likelihood"] = "unlikely"
+    
+    elapsed = (time.time() - start) * 1000
+    results["response_time_ms"] = round(elapsed, 1)
+    await log_usage(key_data["key_id"], "playground-phone-vet", phone, 200, elapsed)
+    
+    return results
+
+
 # --- Status ---
 @app.get("/v1/status")
 async def status(key_data: dict = Depends(get_api_key)):
@@ -572,26 +952,41 @@ async def register(request: Request, email: str, referral: str = ""):
 
 
 async def _notify_signup(email: str, key_id: str, ip: str, referral: str):
-    """Send Telegram notification on new signup."""
-    if not TELEGRAM_BOT_TOKEN:
-        return  # Not configured, skip silently
-    import httpx
-    msg = (
-        f"🆕 **Local-Eye Signup**\n"
-        f"Email: `{email}`\n"
-        f"Key: `{key_id}`\n"
-        f"IP: `{ip}`\n"
-        f"Referral: {referral or 'none'}"
-    )
+    """Send Telegram notification and push to Google Sheets on new signup."""
+    # Telegram notification
+    if TELEGRAM_BOT_TOKEN:
+        import httpx
+        msg = (
+            f"🆕 **Local-Eye Signup**\n"
+            f"Email: `{email}`\n"
+            f"Key: `{key_id}`\n"
+            f"IP: `{ip}`\n"
+            f"Referral: {referral or 'none'}"
+        )
+        try:
+            async with httpx.AsyncClient() as client:
+                await client.post(
+                    f"https://api.telegram.org/bot{TELEGRAM_BOT_TOKEN}/sendMessage",
+                    json={"chat_id": TELEGRAM_CHAT_ID, "text": msg, "parse_mode": "Markdown"},
+                    timeout=5,
+                )
+        except Exception:
+            pass
+
+    # Push to Google Sheets
     try:
-        async with httpx.AsyncClient() as client:
-            await client.post(
-                f"https://api.telegram.org/bot{TELEGRAM_BOT_TOKEN}/sendMessage",
-                json={"chat_id": TELEGRAM_CHAT_ID, "text": msg, "parse_mode": "Markdown"},
-                timeout=5,
-            )
+        import subprocess
+        import json as _json
+        data = _json.dumps({"email": email, "key_id": key_id, "tier": "free", "ip": ip})
+        subprocess.Popen(
+            ["python3", "/home/ron/.openclaw/workspace/scripts/sheets-webhook.py",
+             "localeye_signup", data],
+            start_new_session=True,
+            stdout=subprocess.DEVNULL,
+            stderr=subprocess.DEVNULL,
+        )
     except Exception:
-        pass  # Don't fail registration if notification fails
+        pass  # Don't fail registration if sheets push fails
 
 
 async def send_telegram(msg: str):
@@ -995,6 +1390,287 @@ async def phone_verify(
         raise HTTPException(status_code=500, detail=f"Phone verification failed: {str(e)}")
 
 
+# --- Phone Vet: Scam Detection Endpoint ---
+
+@app.post("/v1/phone/vet")
+async def phone_vet(
+    request: PhoneVetRequest,
+    key_data: dict = Depends(get_api_key),
+):
+    """Vet a phone number for scam likelihood.
+    
+    Uses Twilio Lookup for carrier/line type, cross-references against 
+    company published numbers, and returns a scam likelihood score.
+    """
+    start = time.time()
+    phone = request.phone.strip()
+    # Normalize phone number - add +1 for US numbers without country code
+    if not phone.startswith('+'):
+        digits = _re.sub(r'[^0-9]', '', phone)
+        if len(digits) == 11 and digits.startswith('1'):
+            phone = '+' + digits
+        elif len(digits) == 10:
+            phone = '+1' + digits
+        else:
+            phone = '+' + digits
+    
+    results = {
+        "phone": phone,
+        "carrier": None,
+        "line_type": None,
+        "location": None,
+        "country_code": None,
+        "claimed_company": request.claimed_company or None,
+        "company_official_numbers": [],
+        "number_match": None,
+        "scam_likelihood": "unknown",
+        "scam_score": 0,
+        "reasons": [],
+        "vetted_at": time.strftime("%Y-%m-%dT%H:%M:%SZ", time.gmtime()),
+    }
+    
+    # Step 1: Twilio Lookup - carrier, line type, location
+    try:
+        from twilio.rest import Client
+        client = Client(TWILIO_ACCOUNT_SID, TWILIO_AUTH_TOKEN)
+        
+        lookup_url = f"https://lookups.twilio.com/v1/PhoneNumbers/{phone}"
+        import httpx
+        auth = base64.b64encode(f"{TWILIO_ACCOUNT_SID}:{TWILIO_AUTH_TOKEN}".encode()).decode()
+        
+        async with httpx.AsyncClient() as http:
+            resp = await http.get(
+                lookup_url,
+                params={"Type": "carrier"},
+                headers={"Authorization": f"Basic {auth}"},
+                timeout=10
+            )
+        
+        if resp.status_code == 200:
+            data = resp.json()
+            carrier = data.get("carrier", {})
+            results["carrier"] = carrier.get("name")
+            results["line_type"] = carrier.get("type")
+            results["country_code"] = data.get("country_code")
+            results["national_format"] = data.get("national_format", phone)
+            
+            # Scam signals from carrier info
+            if carrier.get("type") == "voip":
+                results["reasons"].append("VoIP number (common for scams, rarely used by major businesses)")
+                results["scam_score"] += 25
+            elif carrier.get("type") == "landline":
+                results["reasons"].append("Landline number (more typical for businesses)")
+            elif carrier.get("type") == "mobile":
+                results["reasons"].append("Mobile number (less common for corporate businesses)")
+                results["scam_score"] += 15
+            # Flag suspicious carriers for major companies
+            carrier_name = (carrier.get("name") or "").lower()
+            suspicious_carriers = ["onvoy", "bandwidth", "inteliquent", "thinq", "vitelity", "voip innovate"]
+            if any(sc in carrier_name for sc in suspicious_carriers) and request.claimed_company:
+                results["reasons"].append(f"⚠️ Carrier '{carrier.get('name')}' is a wholesale/VoIP provider — major companies like {request.claimed_company} typically use major carriers (AT&T, Verizon, etc.)")
+                results["scam_score"] += 15
+            # Unknown carrier on a claimed major company = suspicious
+            if not carrier.get("name") and request.claimed_company:
+                results["reasons"].append(f"No carrier info found (unusual for a major company like {request.claimed_company})")
+                results["scam_score"] += 20
+    except Exception as e:
+        results["reasons"].append(f"Carrier lookup failed: {str(e)[:100]}")
+    
+    # Step 2: Cross-reference against company's official numbers
+    if request.claimed_company and request.claimed_url:
+        try:
+            # Scrape the company's website for phone numbers
+            async with httpx.AsyncClient() as http:
+                resp = await http.get(
+                    request.claimed_url,
+                    headers={"User-Agent": "Local-Eye/1.0 (Scam Verification)"},
+                    timeout=15,
+                    follow_redirects=True
+                )
+            
+            if resp.status_code == 200:
+                import re
+                html = resp.text
+                
+                # Extract phone numbers from the page
+                phone_patterns = re.findall(
+                    r'(?:\+?1[-.\s]?)?(?:\([0-9]{3}\)|[0-9]{3})[-.\s]?[0-9]{3}[-.\s]?[0-9]{4}',
+                    html
+                )
+                # Normalize found numbers
+                found_numbers = []
+                for p in phone_patterns:
+                    normalized = re.sub(r'[^0-9+]', '', p)
+                    if not normalized.startswith('+') and normalized.startswith('1') and len(normalized) == 11:
+                        normalized = '+' + normalized
+                    elif len(normalized) == 10:
+                        normalized = '+1' + normalized
+                    found_numbers.append(normalized)
+                
+                results["company_official_numbers"] = list(set(found_numbers))[:10]
+                
+                # Check if the input number matches any found number
+                phone_digits = re.sub(r'[^0-9]', '', phone)
+                matches = [n for n in found_numbers if re.sub(r'[^0-9]', '', n) == phone_digits]
+                
+                if matches:
+                    results["number_match"] = True
+                    results["reasons"].append(f"✅ Number found on {request.claimed_company}'s official website")
+                    results["scam_score"] -= 50  # Strong legitimacy signal
+                else:
+                    results["number_match"] = False
+                    results["reasons"].append(f"❌ Number NOT found on {request.claimed_company}'s official website ({len(found_numbers)} numbers found)")
+                    results["scam_score"] += 40  # Strong scam signal
+        except Exception as e:
+            results["reasons"].append(f"Website cross-reference failed: {str(e)[:100]}")
+    elif request.claimed_company and not request.claimed_url:
+        # Auto-construct URL from company name for cross-reference
+        company_slug = request.claimed_company.lower().replace(" ", "").replace("\u0026", "and").replace(".", "").replace("'", "")
+        auto_url = f"https://www.{company_slug}.com"
+        try:
+            blocked_url, reason = is_url_blocked(auto_url)
+            if not blocked_url:
+                async with httpx.AsyncClient() as http:
+                    resp = await http.get(
+                        auto_url,
+                        headers={"User-Agent": "Local-Eye/1.0 (Scam Verification)"},
+                        timeout=10,
+                        follow_redirects=True
+                    )
+                if resp.status_code == 200:
+                    results["reasons"].append(f"Auto-checked {auto_url} (inferred from company name)")
+                    phone_patterns = _re.findall(
+                        r'(?:\\+?1[-.\\s]?)?(?:\\([0-9]{3}\\)|[0-9]{3})[-.\\s]?[0-9]{3}[-.\\s]?[0-9]{4}',
+                        resp.text
+                    )
+                    found_numbers = []
+                    for p in phone_patterns:
+                        normalized = _re.sub(r'[^0-9+]', '', p)
+                        if not normalized.startswith('+') and normalized.startswith('1') and len(normalized) == 11:
+                            normalized = '+' + normalized
+                        elif len(normalized) == 10:
+                            normalized = '+1' + normalized
+                        found_numbers.append(normalized)
+                    results["company_official_numbers"] = list(set(found_numbers))[:10]
+                    phone_digits = _re.sub(r'[^0-9]', '', phone)
+                    matches = [n for n in found_numbers if _re.sub(r'[^0-9]', '', n) == phone_digits]
+                    if matches:
+                        results["number_match"] = True
+                        results["reasons"].append(f"✅ Number found on {request.claimed_company}'s website")
+                        results["scam_score"] -= 50
+                    else:
+                        results["number_match"] = False
+                        results["reasons"].append(f"❌ Number NOT found on {request.claimed_company}'s website ({len(found_numbers)} numbers found)")
+                        results["scam_score"] += 40
+                else:
+                    results["reasons"].append(f"Could not auto-reach {auto_url} — provide claimed_url for stronger verification")
+            else:
+                results["reasons"].append("Auto-URL blocked — provide claimed_url for stronger verification")
+        except Exception as e:
+            results["reasons"].append(f"Auto-URL check failed — provide claimed_url for stronger verification")
+    
+    # Step 3: Check scam reports from other users
+    report_count = await get_scam_report_count(phone)
+    results["scam_reports"] = report_count
+    if report_count > 0:
+        report_boost = min(25, report_count * 5)
+        results["scam_score"] += report_boost
+        results["reasons"].append(f"⚠️ This number has been reported as scam {report_count} time(s) by other users")
+    
+    # Step 4: Calculate final scam likelihood
+    score = max(0, min(100, results["scam_score"]))
+    results["scam_score"] = score
+    
+    if score >= 60:
+        results["scam_likelihood"] = "high"
+    elif score >= 30:
+        results["scam_likelihood"] = "medium"
+    elif score > 0:
+        results["scam_likelihood"] = "low"
+    else:
+        results["scam_likelihood"] = "unlikely"
+    
+    # If number matched company website, override to unlikely regardless of other signals
+    if results.get("number_match") is True:
+        results["scam_likelihood"] = "unlikely"
+    
+    elapsed = (time.time() - start) * 1000
+    results["response_time_ms"] = round(elapsed, 1)
+    
+    await log_usage(key_data["key_id"], "phone-vet", phone, 200, elapsed)
+    
+    # Notify via Telegram
+    await send_telegram(
+        f"🔍 Phone vet result\n"
+        f"Phone: {phone}\n"
+        f"Claimed: {request.claimed_company or 'N/A'}\n"
+        f"Carrier: {results['carrier'] or 'Unknown'} ({results['line_type'] or 'Unknown'})\n"
+        f"Number match: {results['number_match']}\n"
+        f"Scam score: {score}/100 → {results['scam_likelihood']}"
+    )
+    
+    return results
+
+
+# --- Scam Reports ---
+
+@app.post("/v1/phone/report")
+async def report_scam(
+    request: ScamReportRequest,
+    key_data: dict = Depends(get_api_key),
+):
+    """Report a phone number as a scam. Builds Local-Eye's scam database over time."""
+    phone = request.phone.strip()
+    if not phone.startswith('+'):
+        digits = _re.sub(r'[^0-9]', '', phone)
+        if len(digits) == 11 and digits.startswith('1'):
+            phone = '+' + digits
+        elif len(digits) == 10:
+            phone = '+1' + digits
+        else:
+            phone = '+' + digits
+    
+    client_ip = "unknown"
+    
+    await create_scam_report(
+        phone=phone,
+        claimed_company=request.claimed_company or None,
+        scam_score=request.scam_score or None,
+        reporter_ip=client_ip,
+        reporter_key_id=key_data["key_id"],
+        reasons=request.reasons or None,
+    )
+    
+    report_count = await get_scam_report_count(phone)
+    
+    return {
+        "status": "reported",
+        "phone": phone,
+        "total_reports": report_count,
+        "message": f"Thank you! This number has been reported {report_count} time(s). Every report makes Local-Eye smarter.",
+    }
+
+
+@app.get("/v1/phone/reports/{phone}")
+async def get_phone_reports(phone: str, key_data: dict = Depends(get_api_key)):
+    """Get scam reports for a phone number."""
+    if not phone.startswith('+'):
+        digits = _re.sub(r'[^0-9]', '', phone)
+        if len(digits) == 11 and digits.startswith('1'):
+            phone = '+' + digits
+        elif len(digits) == 10:
+            phone = '+1' + digits
+        else:
+            phone = '+' + digits
+    
+    reports = await get_scam_reports(phone)
+    return {
+        "phone": phone,
+        "total_reports": len(reports),
+        "reports": reports,
+    }
+
+
 @app.get("/v1/phone-verify/{call_sid}")
 async def phone_verify_result(call_sid: str, key_data: dict = Depends(get_api_key)):
     """Get the result of a phone verification call."""
@@ -1245,6 +1921,12 @@ GPU-rendered screenshot + extracted text. Uses Playwright on NVIDIA RTX 3090. By
 <p><strong>Verified Tier — $5.00/call</strong><br>
 Your AI calls a real business via Twilio/Maya to verify details. "Are you open right now?" "Do you have the O2 sensor in stock?" Get transcribed answers from the real world.</p>
 </div>
+
+<div class="endpoint">
+<span class="method post">POST</span><span class="path">/v1/phone/vet</span>
+<p><strong>Scam Detection — All Tiers</strong><br>
+Vet a phone number for scam likelihood. Twilio Lookup reveals carrier + line type (VoIP/mobile/landline). Cross-reference against a company's official published numbers. Returns scam score 0-100 with reasoning. <em>"Is this really Disney calling?"</em></p>
+</div>
 </div>
 
 <div class="section">
@@ -1332,6 +2014,73 @@ curl -X POST https://api.localeye.co/v1/verify-web-presence \
 </div>
 
 <div class="section">
+<h2>🔍 Try It — Phone Scam Checker</h2>
+<div style="background:#12122a;border:1px solid #2a2a4a;border-radius:14px;padding:24px;max-width:600px;margin:0 auto">
+<p style="color:#a0a8c0;font-size:0.9rem;margin-bottom:16px">Enter a phone number and the company they claim to represent. Local-Eye will check if the number is legit or a likely scam.</p>
+<div style="display:flex;gap:8px;flex-wrap:wrap;margin-bottom:12px">
+<input type="text" id="vet-phone" placeholder="Phone number — just digits, e.g. 5055147022" style="flex:1;min-width:200px;padding:12px 16px;border-radius:8px;border:1px solid #2a2a4a;background:#0a0a1a;color:#e0e0f0;font-size:1rem">
+</div>
+<div style="display:flex;gap:8px;flex-wrap:wrap;margin-bottom:12px">
+<input type="text" id="vet-company" placeholder="Claimed company (e.g. T-Mobile)" style="flex:1;min-width:200px;padding:12px 16px;border-radius:8px;border:1px solid #2a2a4a;background:#0a0a1a;color:#e0e0f0;font-size:1rem">
+<input type="text" id="vet-url" placeholder="Company website (e.g. https://t-mobile.com)" style="flex:1;min-width:200px;padding:12px 16px;border-radius:8px;border:1px solid #2a2a4a;background:#0a0a1a;color:#e0e0f0;font-size:1rem">
+</div>
+<button id="vet-btn" onclick="vetPhone()" style="width:100%;padding:14px;border-radius:8px;background:#22c55e;color:#000;font-weight:700;border:none;font-size:1rem;cursor:pointer">🛡️ Check for Scams</button>
+<div id="vet-result" style="display:none;margin-top:16px;padding:16px;border-radius:10px;background:#0a0a1a;border:1px solid #2a2a4a"></div>
+</div>
+<script>
+async function vetPhone() {
+  var phone = document.getElementById('vet-phone').value.trim();
+  var company = document.getElementById('vet-company').value.trim();
+  var url = document.getElementById('vet-url').value.trim();
+  var btn = document.getElementById('vet-btn');
+  var resultDiv = document.getElementById('vet-result');
+  if (!phone) { alert('Enter a phone number'); return; }
+  btn.textContent = 'Checking...';
+  btn.disabled = true;
+  try {
+    var tokenResp = await fetch('/v1/playground/token', {method:'POST'});
+    var tokenData = await tokenResp.json();
+    if (!tokenData.token) { throw new Error('No token'); }
+    var body = {phone: phone};
+    if (company) body.claimed_company = company;
+    if (url) body.claimed_url = url;
+    var resp = await fetch('/v1/playground/phone-vet', {
+      method: 'POST',
+      headers: {'Content-Type':'application/json','X-Playground-Token': tokenData.token},
+      body: JSON.stringify(body)
+    });
+    var data = await resp.json();
+    resultDiv.style.display = 'block';
+    var scoreColor = data.scam_score >= 60 ? '#ef4444' : data.scam_score >= 30 ? '#f59e0b' : '#22c55e';
+    var scoreLabel = data.scam_likelihood.toUpperCase();
+    var html = '<div style="text-align:center;margin-bottom:12px">';
+    html += '<div style="font-size:2.5rem;font-weight:800;color:' + scoreColor + '">' + data.scam_score + '/100</div>';
+    html += '<div style="font-size:1.1rem;color:' + scoreColor + ';font-weight:600">' + scoreLabel + ' SCAM RISK</div>';
+    html += '</div>';
+    html += '<div style="margin-top:12px">';
+    if (data.carrier) html += '<p style="color:#a0a8c0;font-size:0.9rem"><strong style="color:#e0e0f0">Carrier:</strong> ' + data.carrier + ' (' + (data.line_type||'unknown') + ')</p>';
+    if (data.number_match !== null && data.number_match !== undefined) {
+      if (data.number_match) html += '<p style="color:#22c55e;font-size:0.9rem">✅ Number found on ' + (data.claimed_company||'company') + '\'s official website</p>';
+      else html += '<p style="color:#ef4444;font-size:0.9rem">❌ Number NOT found on ' + (data.claimed_company||'company') + '\'s official website</p>';
+    }
+    if (data.reasons && data.reasons.length) {
+      html += '<ul style="margin-top:8px;padding-left:20px">';
+      data.reasons.forEach(function(r) { html += '<li style="color:#a0a8c0;font-size:0.85rem;margin:4px 0">' + r + '</li>'; });
+      html += '</ul>';
+    }
+    html += '</div>';
+    resultDiv.innerHTML = html;
+  } catch(e) {
+    resultDiv.style.display = 'block';
+    resultDiv.innerHTML = '<p style="color:#ef4444">Error: ' + e.message + '</p>';
+  }
+  btn.textContent = '🛡️ Check for Scams';
+  btn.disabled = false;
+}
+</script>
+</div>
+
+<div class="section">
 <h2>Built for AI Agents</h2>
 <div class="code-block"><code><span class="comment"># Agent discovery manifest</span>
 GET /.well-known/ai-plugin.json
@@ -1354,6 +2103,7 @@ GET /.well-known/ai-plugin.json
 </div>
 </body>
 </html>"""
+
 
 if __name__ == "__main__":
     import uvicorn

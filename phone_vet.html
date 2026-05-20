@@ -1,0 +1,190 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>Local-Eye Phone Scam Checker</title>
+<meta name="description" content="Check if a phone number is a scam. Enter any number and see if it matches the company they claim to represent.">
+<link rel="icon" href="data:image/svg+xml,<svg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 100 100'><text y='.9em' font-size='90'>🛡️</text></svg>">
+<style>
+*{margin:0;padding:0;box-sizing:border-box}
+body{font-family:-apple-system,BlinkMacSystemFont,'Segoe UI',sans-serif;background:#0a0a1a;color:#e0e0f0;line-height:1.6;min-height:100vh;display:flex;flex-direction:column}
+.container{max-width:600px;margin:0 auto;padding:40px 20px;flex:1}
+.header{text-align:center;padding:40px 0 30px}
+.header h1{font-size:2.2rem;margin-bottom:8px}
+.header .shield{font-size:3rem;margin-bottom:10px}
+.header p{color:#8890a8;font-size:1rem;max-width:400px;margin:0 auto}
+.form-group{margin-bottom:16px}
+.form-group label{display:block;color:#a0a8c0;font-size:0.85rem;margin-bottom:6px;font-weight:600}
+.form-group input{width:100%;padding:14px 16px;border-radius:10px;border:1px solid #2a2a4a;background:#12122a;color:#e0e0f0;font-size:1.1rem;outline:none;transition:border-color 0.2s}
+.form-group input:focus{border-color:#22c55e}
+.form-group input::placeholder{color:#555}
+.btn{width:100%;padding:16px;border-radius:10px;background:#22c55e;color:#000;font-weight:700;border:none;font-size:1.1rem;cursor:pointer;transition:all 0.2s}
+.btn:hover{background:#16a34a;transform:translateY(-1px)}
+.btn:disabled{opacity:0.5;cursor:not-allowed;transform:none}
+.result{display:none;margin-top:24px;padding:24px;border-radius:14px;background:#12122a;border:1px solid #2a2a4a}
+.score{text-align:center;margin-bottom:16px}
+.score .number{font-size:3.5rem;font-weight:800}
+.score .label{font-size:1.1rem;font-weight:600;margin-top:4px}
+.details{margin-top:16px}
+.details p{color:#a0a8c0;font-size:0.9rem;margin:8px 0}
+.details strong{color:#e0e0f0}
+.details ul{margin-top:8px;padding-left:20px}
+.details li{color:#a0a8c0;font-size:0.9rem;margin:6px 0}
+.error{color:#ef4444}
+.success{color:#22c55e}
+.warning{color:#f59e0b}
+footer{text-align:center;padding:30px 0;color:#555;font-size:0.8rem}
+footer a{color:#22c55e;text-decoration:none}
+.powered{text-align:center;margin-top:12px}
+.powered a{color:#555;text-decoration:none;font-size:0.8rem}
+.powered a:hover{color:#22c55e}
+</style>
+</head>
+<body>
+<div class="container">
+<div class="header">
+<div class="shield">🛡️</div>
+<h1>Phone Scam Checker</h1>
+<p>Enter a phone number and the company they claim to represent. We'll check if it's legit.</p>
+</div>
+
+<div class="form-group">
+<label>Phone Number *</label>
+<input type="tel" id="vet-phone" placeholder="5055147022 or (505) 514-7022" autofocus>
+</div>
+
+<div class="form-group">
+<label>Claimed Company (optional)</label>
+<input type="text" id="vet-company" placeholder="T-Mobile, Disney, Wells Fargo...">
+</div>
+
+<div class="form-group">
+<label>Company Website (optional, improves accuracy)</label>
+<input type="url" id="vet-url" placeholder="https://www.t-mobile.com">
+</div>
+
+<button class="btn" id="vet-btn" onclick="vetPhone()">🛡️ Check for Scams</button>
+
+<div class="result" id="vet-result"></div>
+
+<div class="powered"><a href="https://localeye.co">Powered by Local-Eye API</a></div>
+</div>
+
+<footer>
+<p>A <a href="https://brandbooststudio.co">BrandBoost Studio</a> product</p>
+</footer>
+
+<script>
+async function vetPhone() {
+  var phone = document.getElementById('vet-phone').value.trim();
+  var company = document.getElementById('vet-company').value.trim();
+  var url = document.getElementById('vet-url').value.trim();
+  var btn = document.getElementById('vet-btn');
+  var resultDiv = document.getElementById('vet-result');
+  
+  if (!phone) {
+    resultDiv.style.display = 'block';
+    resultDiv.innerHTML = '<p class="error">Please enter a phone number</p>';
+    return;
+  }
+  
+  btn.textContent = 'Checking...';
+  btn.disabled = true;
+  resultDiv.style.display = 'none';
+  
+  try {
+    var tokenResp = await fetch('/v1/playground/token', {method: 'POST'});
+    if (!tokenResp.ok) throw new Error('Failed to get token (HTTP ' + tokenResp.status + ')');
+    var tokenData = await tokenResp.json();
+    if (!tokenData.token) throw new Error('No token received');
+    
+    var body = {phone: phone};
+    if (company) body.claimed_company = company;
+    if (url) body.claimed_url = url;
+    
+    var resp = await fetch('/v1/playground/phone-vet', {
+      method: 'POST',
+      headers: {'Content-Type': 'application/json', 'X-Playground-Token': tokenData.token},
+      body: JSON.stringify(body)
+    });
+    
+    if (!resp.ok) {
+      var errData = await resp.json();
+      var errMsg = 'Check failed';
+      if (errData.detail) {
+        try { var parsed = JSON.parse(errData.detail); errMsg = parsed.message || errMsg; } catch(e) { errMsg = errData.detail; }
+      }
+      throw new Error(errMsg);
+    }
+    
+    var data = await resp.json();
+    resultDiv.style.display = 'block';
+    
+    var scoreColor = data.scam_score >= 60 ? '#ef4444' : data.scam_score >= 30 ? '#f59e0b' : '#22c55e';
+    var scoreLabel = data.scam_likelihood.toUpperCase();
+    var labelEmoji = data.scam_likelihood === 'high' ? '🚨' : data.scam_likelihood === 'medium' ? '⚠️' : '✅';
+    
+    var html = '<div class="score">';
+    html += '<div class="number" style="color:' + scoreColor + '">' + data.scam_score + '/100</div>';
+    html += '<div class="label" style="color:' + scoreColor + '">' + labelEmoji + ' ' + scoreLabel + ' SCAM RISK</div>';
+    html += '</div>';
+    html += '<div class="details">';
+    html += '<p><strong>Phone:</strong> ' + (data.national_format || data.phone) + '</p>';
+    if (data.carrier) html += '<p><strong>Carrier:</strong> ' + data.carrier + ' (' + (data.line_type || 'unknown') + ')</p>';
+    if (data.country_code) html += '<p><strong>Country:</strong> ' + data.country_code + '</p>';
+    if (data.number_match === true) html += '<p class="success">✅ Number found on ' + (data.claimed_company || 'company') + '\'s official website</p>';
+    else if (data.number_match === false) html += '<p class="error">❌ Number NOT found on ' + (data.claimed_company || 'company') + '\'s official website</p>';
+    if (data.reasons && data.reasons.length) {
+      html += '<p style="margin-top:12px;color:#8890a8;font-weight:600">Analysis:</p>';
+      html += '<ul>';
+      data.reasons.forEach(function(r) { html += '<li>' + r + '</li>'; });
+      html += '</ul>';
+    }
+    if (data.scam_reports > 0) html += '<p style="margin-top:8px;color:#f59e0b">⚠️ Reported as scam ' + data.scam_reports + ' time(s) by other users</p>';
+    html += '</div>';
+    
+    // Add report button if score is medium or higher
+    if (data.scam_score >= 30) {
+      html += '<button onclick="reportScam(\'' + data.phone + '\', \'' + (company || '') + '\', ' + data.scam_score + ')" style="width:100%;margin-top:16px;padding:12px;border-radius:8px;background:#ef444420;color:#ef4444;border:1px solid #ef444440;font-weight:600;font-size:0.9rem;cursor:pointer">🚩 Report This Number as Scam</button>';
+    }
+    
+    resultDiv.innerHTML = html;
+  } catch(e) {
+    resultDiv.style.display = 'block';
+    resultDiv.innerHTML = '<p class="error">Error: ' + e.message + '</p>';
+  }
+  
+  btn.textContent = '🛡️ Check for Scams';
+  btn.disabled = false;
+}
+
+document.getElementById('vet-phone').addEventListener('keypress', function(e) { if (e.key === 'Enter') vetPhone(); });
+
+async function reportScam(phone, company, score) {
+  var resultDiv = document.getElementById('vet-result');
+  try {
+    var tokenResp = await fetch('/v1/playground/token', {method: 'POST'});
+    var tokenData = await tokenResp.json();
+    if (!tokenData.token) throw new Error('No token');
+    
+    // Use the API report endpoint - playground users can report too
+    var body = {phone: phone, scam_score: score};
+    if (company) body.claimed_company = company;
+    
+    var resp = await fetch('/v1/phone/report', {
+      method: 'POST',
+      headers: {'Content-Type': 'application/json', 'X-Playground-Token': tokenData.token},
+      body: JSON.stringify(body)
+    });
+    
+    if (!resp.ok) throw new Error('Report failed (HTTP ' + resp.status + ')');
+    var data = await resp.json();
+    resultDiv.innerHTML += '<p style="color:#22c55e;margin-top:12px;text-align:center;font-weight:600">✅ Reported! This number has been flagged ' + data.total_reports + ' time(s).</p>';
+  } catch(e) {
+    resultDiv.innerHTML += '<p class="error" style="margin-top:12px;text-align:center">Could not report: ' + e.message + '</p>';
+  }
+}
+</script>
+</body>
+</html>
