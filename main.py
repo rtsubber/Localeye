@@ -37,6 +37,7 @@ SCREENSHOT_RETENTION_HOURS = int(os.getenv("SCREENSHOT_RETENTION_HOURS", "24"))
 TWILIO_ACCOUNT_SID = os.getenv("TWILIO_ACCOUNT_SID", "")
 TWILIO_AUTH_TOKEN = os.getenv("TWILIO_AUTH_TOKEN", "")
 TWILIO_PHONE_NUMBER = os.getenv("TWILIO_PHONE_NUMBER", "")
+GROQ_API_KEY = os.getenv("GROQ_API_KEY", "")
 OLLAMA_BASE_URL = os.getenv("OLLAMA_BASE_URL", "http://localhost:11434")
 
 # Telegram notifications
@@ -284,6 +285,7 @@ class PhoneVerifyRequest(BaseModel):
     business_phone: str = Field(..., description="Phone number to call")
     question: str = Field(default="Are you open right now?", description="Question for the business")
     business_name: str = Field(default="", description="Name of the business to ask for")
+    mode: str = Field(default="maya", description="Call mode: 'maya' for conversational AI, 'tts' for text-to-speech fallback")
 
 class PhoneVetRequest(BaseModel):
     phone: str = Field(..., description="Phone number to vet (E.164 format preferred, e.g. +18005551234)")
@@ -461,6 +463,13 @@ async def phone_vet_page():
     page = (Path(__file__).parent / "phone_vet.html").read_text()
     return HR(content=page, headers={"Cache-Control": "no-cache, no-store, must-revalidate", "Pragma": "no-cache", "Expires": "0"})
 
+@app.get("/phone-verify", response_class=HTMLResponse)
+async def phone_verify_demo_page():
+    """Live phone verification demo page."""
+    from fastapi.responses import HTMLResponse as HR
+    page = (Path(__file__).parent / "landing" / "phone-verify-demo.html").read_text()
+    return HR(content=page, headers={"Cache-Control": "no-cache, no-store, must-revalidate", "Pragma": "no-cache", "Expires": "0"})
+
 # --- Protected Docs (require API key) ---
 @app.get("/docs", include_in_schema=False)
 async def swagger_ui(key_data: dict = Depends(get_api_key)):
@@ -581,7 +590,7 @@ def _build_openapi(tier: str = "free"):
     return schema
 
 # --- Playground Endpoints ---
-PLAYGROUND_DEMO_KEY = "REDACTED_PLAYGROUND_KEY"  # Dedicated playground key
+PLAYGROUND_DEMO_KEY = os.getenv("PLAYGROUND_DEMO_KEY", "")
 
 @app.post("/v1/playground/token")
 async def playground_token(request: Request):
@@ -888,6 +897,141 @@ async def playground_phone_vet(request: Request, body: PhoneVetRequest):
     await log_usage(key_data["key_id"], "playground-phone-vet", phone, 200, elapsed)
     
     return results
+
+
+# --- Playground Phone Verify Demo ---
+_PLAYGROUND_PHONE_VERIFY_KEY = os.getenv("PLAYGROUND_PHONE_VERIFY_KEY", "")
+_PLAYGROUND_PHONE_VERIFY_DAILY = 10  # Max 10 demo calls per day
+
+@app.post("/v1/playground/phone-verify")
+async def playground_phone_verify(request: Request):
+    """Playground phone verification demo endpoint.
+    
+    Rate limited: 10 calls per day total (uses the pro key).
+    For real usage, sign up for an API key.
+    """
+    token = request.headers.get("X-Playground-Token", "")
+    client_ip = request.headers.get("x-forwarded-for", request.client.host if request.client else "unknown").split(",")[0].strip()
+    
+    if not token or not _validate_playground_token(token, client_ip):
+        raise HTTPException(status_code=401, detail=json.dumps({
+            "error": "invalid_token",
+            "message": "Playground token expired. Refresh the page.",
+        }))
+    
+    # Parse request body
+    body = await request.json()
+    phone = body.get("business_phone", "").strip()
+    question = body.get("question", "Are you currently open right now?")
+    business_name = body.get("business_name", "")
+    
+    if not phone:
+        raise HTTPException(status_code=400, detail="business_phone is required")
+    
+    # Normalize phone number
+    if not phone.startswith('+'):
+        digits = _re.sub(r'[^0-9]', '', phone)
+        if len(digits) == 11 and digits.startswith('1'):
+            phone = '+' + digits
+        elif len(digits) == 10:
+            phone = '+1' + digits
+        else:
+            phone = '+' + digits
+    
+    # Check daily limit for playground phone calls
+    today = time.strftime("%Y-%m-%d")
+    key_data = await validate_key(_PLAYGROUND_PHONE_VERIFY_KEY)
+    if not key_data:
+        raise HTTPException(status_code=503, detail="Demo unavailable")
+    
+    if not await check_rate_limit(key_data["key_id"], _PLAYGROUND_PHONE_VERIFY_DAILY):
+        raise HTTPException(status_code=429, detail=json.dumps({
+            "error": "demo_limit_reached",
+            "message": "Daily demo limit reached. Get your own API key for unlimited calls.",
+            "signup_url": "https://localeye.co",
+        }))
+    
+    if not TWILIO_ACCOUNT_SID:
+        raise HTTPException(status_code=503, detail="Phone verification not configured yet")
+    
+    # Make the actual Twilio call
+    start = time.time()
+    try:
+        from twilio.rest import Client
+        client = Client(TWILIO_ACCOUNT_SID, TWILIO_AUTH_TOKEN)
+        
+        business_label = f" from {business_name}" if business_name else ""
+        gather_prompt = (
+            f"Hi there, I have a quick question{business_label}. "
+            f"{question} "
+        )
+        twiml = f'''<Response>
+            <Gather input="speech" timeout="10" speechTimeout="3" action="https://api.localeye.co/v1/webhook/twilio/gather?call_sid={{CallSid}}" method="POST" speechModel="phone_call">
+                <Say voice="alice">{gather_prompt}</Say>
+            </Gather>
+            <Say voice="alice">Thanks anyway, have a great day!</Say>
+        </Response>'''
+        
+        call = client.calls.create(
+            to=phone,
+            from_=TWILIO_PHONE_NUMBER,
+            twiml=twiml,
+            record=True,
+            status_callback="https://api.localeye.co/v1/webhook/twilio/status",
+            status_callback_event=["initiated", "ringing", "answered", "completed"],
+            status_callback_method="POST",
+        )
+        
+        elapsed = (time.time() - start) * 1000
+        
+        # Store verification in DB
+        await create_phone_verification(
+            call_sid=call.sid,
+            key_id=key_data["key_id"],
+            business_phone=phone,
+            business_name=business_name,
+            question=question,
+        )
+        await log_usage(key_data["key_id"], "phone-verify", phone, 200, elapsed)
+        
+        # Notify via Telegram
+        await send_telegram(
+            f"📞 DEMO phone verification call\n"
+            f"To: {phone}\n"
+            f"Business: {business_name or 'Unknown'}\n"
+            f"Question: {question}\n"
+            f"Call SID: {call.sid}\n"
+            f"Source: playground demo page"
+        )
+        
+        return {
+            "status": "call_initiated",
+            "call_sid": call.sid,
+            "phone": phone,
+            "question": question,
+            "business_name": business_name,
+            "response_time_ms": round(elapsed, 1),
+            "note": "Transcription will be available shortly. The page will auto-poll for results.",
+            "poll_url": f"/v1/phone-verify/{call.sid}",
+        }
+    
+    except Exception as e:
+        raise HTTPException(status_code=500, detail=f"Phone verification failed: {str(e)}")
+
+
+@app.get("/v1/playground/phone-verify/{call_sid}")
+async def playground_phone_verify_poll(call_sid: str, request: Request):
+    """Poll for phone verification results from the playground demo."""
+    token = request.headers.get("X-Playground-Token", "")
+    client_ip = request.headers.get("x-forwarded-for", request.client.host if request.client else "unknown").split(",")[0].strip()
+    
+    if not token or not _validate_playground_token(token, client_ip):
+        raise HTTPException(status_code=401, detail="Token expired. Refresh the page.")
+    
+    result = await db_get_phone_verification(call_sid)
+    if not result:
+        raise HTTPException(status_code=404, detail="Verification not found")
+    return result
 
 
 # --- Status ---
@@ -1321,6 +1465,84 @@ async def phone_verify(
         raise HTTPException(status_code=503, detail="Phone verification not configured yet")
 
     start = time.time()
+    
+    # Use Maya conversational AI if mode=maya
+    if request.mode == "maya":
+        try:
+            # Check if Maya is running
+            maya_health = await httpx.AsyncClient().get("http://localhost:5003/", timeout=5.0)
+            if maya_health and maya_health.status_code == 200:
+                from twilio.rest import Client
+                maya_client = Client(TWILIO_ACCOUNT_SID, TWILIO_AUTH_TOKEN)
+                
+                MAYA_WS_URL = "wss://ron-system-product-name.tail38a93d.ts.net/maya/ws"
+                
+                # Create outbound call that streams to Maya's WebSocket
+                # Maya will see callType=verification and use conversational AI
+                maya_twiml = f"""<?xml version="1.0" encoding="UTF-8"?>
+<Response>
+  <Connect>
+    <Stream url="{MAYA_WS_URL}">
+      <Parameter name="from" value="{TWILIO_PHONE_NUMBER}" />
+      <Parameter name="to" value="{request.business_phone}" />
+      <Parameter name="callType" value="verification" />
+      <Parameter name="businessName" value="{request.business_name}" />
+      <Parameter name="question" value="{request.question}" />
+    </Stream>
+  </Connect>
+  <Pause length="120" />
+</Response>"""
+                
+                call = maya_client.calls.create(
+                    to=request.business_phone,
+                    from_=TWILIO_PHONE_NUMBER,
+                    twiml=maya_twiml,
+                    record=True,
+                    status_callback="https://api.localeye.co/v1/webhook/twilio/status",
+                    status_callback_event=["initiated", "ringing", "answered", "completed"],
+                    status_callback_method="POST",
+                )
+                
+                elapsed = (time.time() - start) * 1000
+                
+                # Store in DB
+                await create_phone_verification(
+                    call_sid=call.sid,
+                    key_id=key_data["key_id"],
+                    business_phone=request.business_phone,
+                    business_name=request.business_name,
+                    question=request.question,
+                )
+                await log_usage(key_data["key_id"], "phone-verify", request.business_phone, 200, elapsed)
+                await charge_skyfire_if_applicable(key_data, "phone-verify")
+                
+                await send_telegram(
+                    f"📞 Maya verification call initiated\n"
+                    f"To: {request.business_phone}\n"
+                    f"Business: {request.business_name or 'Unknown'}\n"
+                    f"Question: {request.question}\n"
+                    f"Mode: Maya conversational AI\n"
+                    f"Call SID: {call.sid}"
+                )
+                
+                return {
+                    "status": "call_initiated",
+                    "call_sid": call.sid,
+                    "phone": request.business_phone,
+                    "business_name": request.business_name,
+                    "question": request.question,
+                    "mode": "maya_conversational",
+                    "response_time_ms": round(elapsed, 1),
+                    "tier": tier,
+                    "note": "Maya AI is handling this call with natural voice. Transcription will be available after the call completes.",
+                    "poll_url": f"/v1/phone-verify/{call.sid}",
+                }
+            else:
+                logger.info("Maya not running, falling back to TTS")
+        except Exception as e:
+            logger.info(f"Maya unavailable: {e}, falling back to TTS")
+    
+    # Fallback: TTS mode (original TwiML)
     try:
         from twilio.rest import Client
         client = Client(TWILIO_ACCOUNT_SID, TWILIO_AUTH_TOKEN)
@@ -1330,17 +1552,16 @@ async def phone_verify(
         # 2. Gather response (speech or DTMF)
         # 3. Record the answer
         # 4. Hang up
-        business_label = f"at {request.business_name}" if request.business_name else ""
+        business_label = f" from {request.business_name}" if request.business_name else ""
         gather_prompt = (
-            f"Hello, this is a verification call{business_label}. "
+            f"Hi there, I have a quick question{business_label}. "
             f"{request.question} "
-            f"Please answer clearly after the beep."
         )
         twiml = f'''<Response>
             <Gather input="speech" timeout="10" speechTimeout="3" action="https://api.localeye.co/v1/webhook/twilio/gather?call_sid={{CallSid}}" method="POST" speechModel="phone_call">
-                <Say>{gather_prompt}</Say>
+                <Say voice="alice">{gather_prompt}</Say>
             </Gather>
-            <Say>I didn't catch that. Goodbye.</Say>
+            <Say voice="alice">Thanks anyway, have a great day!</Say>
         </Response>'''
 
         call = client.calls.create(
@@ -1715,6 +1936,80 @@ async def twilio_gather(request: Request):
     )
 
 
+
+
+async def transcribe_call_recording(call_sid: str):
+    """Download recording from Twilio and transcribe with Groq Whisper."""
+    try:
+        # Wait a few seconds for recording to be ready
+        await asyncio.sleep(5)
+        
+        # Get recordings for this call
+        async with httpx.AsyncClient() as client:
+            recordings_resp = await client.get(
+                f"https://api.twilio.com/2010-04-01/Accounts/{TWILIO_ACCOUNT_SID}/Calls/{call_sid}/Recordings.json",
+                auth=(TWILIO_ACCOUNT_SID, TWILIO_AUTH_TOKEN),
+                timeout=15.0
+            )
+            
+            if recordings_resp.status_code != 200:
+                logger.info(f"Transcription skip: no recordings for {call_sid}")
+                return
+            
+            recordings = recordings_resp.json().get("recordings", [])
+            if not recordings:
+                logger.info(f"Transcription skip: empty recordings for {call_sid}")
+                return
+            
+            rec_sid = recordings[0]["sid"]
+            
+            # Download the recording as WAV
+            wav_resp = await client.get(
+                f"https://api.twilio.com/2010-04-01/Accounts/{TWILIO_ACCOUNT_SID}/Recordings/{rec_sid}.wav",
+                auth=(TWILIO_ACCOUNT_SID, TWILIO_AUTH_TOKEN),
+                timeout=30.0
+            )
+            
+            if wav_resp.status_code != 200:
+                logger.info(f"Transcription skip: could not download recording {rec_sid}")
+                return
+            
+            # Send to Groq Whisper for transcription
+            whisper_resp = await client.post(
+                "https://api.groq.com/openai/v1/audio/transcriptions",
+                headers={"Authorization": f"Bearer {GROQ_API_KEY}"},
+                files={"file": ("recording.wav", wav_resp.content, "audio/wav")},
+                data={"model": "whisper-large-v3", "response_format": "json"},
+                timeout=30.0
+            )
+            
+            if whisper_resp.status_code == 200:
+                result = whisper_resp.json()
+                transcription = result.get("text", "").strip()
+                
+                if transcription:
+                    # Update the verification record
+                    await update_phone_verification(
+                        call_sid=call_sid,
+                        transcription=transcription
+                    )
+                    
+                    # Notify via Telegram
+                    await send_telegram(
+                        f"📝 Transcription ready\n"
+                        f"Call SID: {call_sid}\n"
+                        f"Transcript: {transcription[:200]}"
+                    )
+                    logger.info(f"Transcription saved for {call_sid}: {transcription[:100]}")
+                else:
+                    logger.info(f"Transcription empty for {call_sid}")
+            else:
+                logger.info(f"Whisper failed for {call_sid}: {whisper_resp.status_code}")
+                
+    except Exception as e:
+        logger.error(f"Transcription error for {call_sid}: {e}")
+
+
 @app.post("/v1/webhook/twilio/status")
 async def twilio_status(request: Request):
     """Handle Twilio call status callbacks."""
@@ -1867,6 +2162,7 @@ footer a{color:#22c55e;text-decoration:none}
 <p>Other AI agents get blocked by Cloudflare, CAPTCHAs, and bot detection. Yours doesn't have to.<br>
 Fetch pages from a <strong>residential IP</strong>, render with <strong>real GPU</strong>, verify via <strong>phone call</strong>.</p>
 <div class="cta">
+<a href="/phone-verify" class="cta-primary" style="background:linear-gradient(135deg,#06b6d4,#22c55e)">📞 Try Phone Verification Demo</a>
 <a href="#pricing" class="cta-primary">Get API Key — Free Tier Available</a>
 <a href="/docs" class="cta-secondary">API Docs</a>
 </div>
@@ -1899,6 +2195,15 @@ document.getElementById('waitlist-form').addEventListener('submit', function(e) 
     });
 });
 </script>
+</div>
+
+<!-- Phone Verification Demo Banner -->
+<div style="text-align:center;padding:24px 20px;margin:0 auto;max-width:700px">
+  <div style="background:linear-gradient(135deg,#0d2818,#0a1628);border:1px solid #22c55e40;border-radius:14px;padding:24px">
+    <h2 style="color:#22c55e;font-size:1.4rem;margin-bottom:8px">📞 Phone Verification — Now Live</h2>
+    <p style="color:#8890a8;font-size:0.95rem;margin-bottom:16px">Watch AI call a business and verify their hours in real-time. Try it yourself.</p>
+    <a href="/phone-verify" style="display:inline-block;padding:14px 28px;border-radius:10px;background:linear-gradient(135deg,#06b6d4,#22c55e);color:#000;font-weight:700;text-decoration:none;font-size:1rem">📞 Try the Live Demo →</a>
+  </div>
 </div>
 
 <div class="section">

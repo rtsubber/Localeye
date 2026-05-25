@@ -1,0 +1,233 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>Local-Eye Phone Verification — Live Demo</title>
+<meta name="description" content="Watch Local-Eye call a business and verify their hours in real-time. AI-powered phone verification.">
+<link rel="icon" href="data:image/svg+xml,<svg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 100 100'><text y='.9em' font-size='90'>&#x1F4DE;</text></svg>">
+<meta property="og:title" content="Local-Eye Phone Verification Demo">
+<meta property="og:description" content="Watch AI call a business and verify their hours in real-time.">
+<meta property="og:image" content="https://localeye.co/localeye-logo.png">
+<style>
+*{margin:0;padding:0;box-sizing:border-box}
+body{font-family:-apple-system,BlinkMacSystemFont,'Segoe UI',sans-serif;background:#0a0e1a;color:#e0e0f0;line-height:1.6;min-height:100vh}
+.hero{text-align:center;padding:60px 20px 30px;background:linear-gradient(135deg,#0a0e1a 0%,#111827 50%,#0a0e1a 100%)}
+.hero .icon{font-size:4rem;margin-bottom:16px;animation:pulse 2s infinite}
+@keyframes pulse{0%,100%{transform:scale(1)}50%{transform:scale(1.05)}}
+.hero h1{font-size:2.4rem;font-weight:800;background:linear-gradient(135deg,#22c55e,#06b6d4);-webkit-background-clip:text;-webkit-text-fill-color:transparent;margin-bottom:8px}
+.hero p{color:#8890a8;font-size:1.1rem;max-width:500px;margin:0 auto}
+.hero .subtitle{color:#06b6d4;font-size:0.9rem;margin-top:8px;font-weight:600}
+.container{max-width:700px;margin:0 auto;padding:20px}
+.demo-card{background:#111827;border:1px solid #1e293b;border-radius:16px;padding:32px;margin-top:24px}
+.demo-card h2{font-size:1.3rem;margin-bottom:4px;color:#e0e0f0}
+.demo-card .desc{color:#8890a8;font-size:0.9rem;margin-bottom:24px}
+.form-group{margin-bottom:16px}
+.form-group label{display:block;color:#a0a8c0;font-size:0.85rem;margin-bottom:6px;font-weight:600}
+.form-group input,.form-group select{width:100%;padding:14px 16px;border-radius:10px;border:1px solid #2a2a4a;background:#0a0e1a;color:#e0e0f0;font-size:1rem;outline:none;transition:border-color 0.2s}
+.form-group input:focus,.form-group select:focus{border-color:#22c55e}
+.form-group input::placeholder{color:#555}
+.form-group select{cursor:pointer}
+.btn{width:100%;padding:16px;border-radius:10px;background:linear-gradient(135deg,#22c55e,#16a34a);color:#000;font-weight:700;border:none;font-size:1.1rem;cursor:pointer;transition:all 0.2s;display:flex;align-items:center;justify-content:center;gap:8px}
+.btn:hover{transform:translateY(-1px);box-shadow:0 4px 20px #22c55e40}
+.btn:disabled{opacity:0.5;cursor:not-allowed;transform:none;box-shadow:none}
+.progress-area{display:none;margin-top:24px}
+.progress-area.active{display:block}
+.step{display:flex;align-items:flex-start;gap:12px;padding:12px 0;border-bottom:1px solid #1e293b}
+.step:last-child{border-bottom:none}
+.step .step-icon{font-size:1.4rem;min-width:32px;text-align:center}
+.step .step-text{flex:1}
+.step .step-title{font-weight:600;color:#e0e0f0;font-size:0.95rem}
+.step .step-detail{color:#8890a8;font-size:0.85rem;margin-top:2px}
+.step.pending .step-icon{opacity:0.3}
+.step.active .step-icon{animation:pulse 1s infinite}
+.step.done .step-icon{opacity:1}
+.step.done .step-title{color:#22c55e}
+.result-card{display:none;margin-top:24px;padding:24px;border-radius:14px;background:#0d2818;border:1px solid #16a34a40}
+.result-card.active{display:block}
+.result-card h3{color:#22c55e;font-size:1.2rem;margin-bottom:16px}
+.transcript-box{background:#0a0e1a;border:1px solid #1e293b;border-radius:10px;padding:16px;margin:12px 0;font-family:monospace;font-size:0.9rem;white-space:pre-wrap;line-height:1.5}
+.transcript-box .ai{color:#06b6d4}
+.transcript-box .business{color:#22c55e}
+.detail-row{display:flex;justify-content:space-between;padding:8px 0;border-bottom:1px solid #1e293b}
+.detail-row:last-child{border-bottom:none}
+.detail-label{color:#8890a8;font-size:0.9rem}
+.detail-value{color:#e0e0f0;font-weight:600;font-size:0.9rem}
+.try-api{margin-top:32px;padding:24px;background:#111827;border:1px solid #1e293b;border-radius:14px;text-align:center}
+.try-api h3{color:#e0e0f0;font-size:1.1rem;margin-bottom:8px}
+.try-api p{color:#8890a8;font-size:0.9rem;margin-bottom:16px}
+.try-api code{background:#0a0e1a;padding:12px 16px;border-radius:8px;display:block;text-align:left;font-size:0.8rem;overflow-x:auto;color:#06b6d4;border:1px solid #1e293b}
+.badge{display:inline-block;padding:4px 12px;border-radius:20px;font-size:0.75rem;font-weight:600;margin:0 4px}
+.badge-green{background:#22c55e20;color:#22c55e;border:1px solid #22c55e40}
+.badge-cyan{background:#06b6d420;color:#06b6d4;border:1px solid #06b6d440}
+.features{display:grid;grid-template-columns:1fr 1fr;gap:16px;margin-top:24px}
+.feature{background:#111827;border:1px solid #1e293b;border-radius:12px;padding:20px;text-align:center}
+.feature .icon{font-size:2rem;margin-bottom:8px}
+.feature h4{color:#e0e0f0;font-size:0.9rem;margin-bottom:4px}
+.feature p{color:#8890a8;font-size:0.8rem}
+footer{text-align:center;padding:40px 20px;color:#555;font-size:0.8rem}
+footer a{color:#22c55e;text-decoration:none}
+@media(max-width:600px){.hero h1{font-size:1.8rem}.features{grid-template-columns:1fr}.container{padding:16px}.demo-card{padding:20px}}
+</style>
+</head>
+<body>
+<div class="hero">
+  <div class="icon">&#x1F4DE;</div>
+  <h1>Phone Verification</h1>
+  <p>Watch Local-Eye call a business and verify their hours &mdash; live.</p>
+  <div class="subtitle">&#x2728; AI-powered outbound calls &bull; Real-time transcription &bull; Instant verification</div>
+</div>
+<div class="container">
+  <div class="demo-card">
+    <h2>Try It Live</h2>
+    <div class="desc">Enter a business phone number and a question. Local-Eye will call, ask, and transcribe the answer.</div>
+    <div class="form-group">
+      <label>Business Phone Number</label>
+      <input type="tel" id="phone-input" placeholder="(512) 555-0123" autofocus>
+    </div>
+    <div class="form-group">
+      <label>Business Name (optional)</label>
+      <input type="text" id="business-name" placeholder="Joe's Pizza, Main Street Bakery...">
+    </div>
+    <div class="form-group">
+      <label>Question to Ask</label>
+      <select id="question-select">
+        <option value="Are you currently open right now?">Are you currently open right now?</option>
+        <option value="Do you have a dedicated gluten-free kitchen or menu?">Do you have a dedicated gluten-free kitchen?</option>
+        <option value="What are your hours today?">What are your hours today?</option>
+        <option value="Do you accept walk-ins or do I need a reservation?">Do you accept walk-ins?</option>
+        <option value="custom">Custom question...</option>
+      </select>
+    </div>
+    <div class="form-group" id="custom-question-group" style="display:none">
+      <label>Your Question</label>
+      <input type="text" id="custom-question" placeholder="What would you like to ask?">
+    </div>
+    <button class="btn" id="call-btn" onclick="startCall()">&#x1F4DE; Start Verification Call</button>
+    <div class="progress-area" id="progress-area">
+      <div class="step pending" id="step-init"><div class="step-icon">&#x1F4DE;</div><div class="step-text"><div class="step-title">Initiating call...</div><div class="step-detail" id="step-init-detail">Connecting to business</div></div></div>
+      <div class="step pending" id="step-ring"><div class="step-icon">&#x1F50A;</div><div class="step-text"><div class="step-title">Ringing...</div><div class="step-detail" id="step-ring-detail">Waiting for answer</div></div></div>
+      <div class="step pending" id="step-ask"><div class="step-icon">&#x1F916;</div><div class="step-text"><div class="step-title">AI is asking your question</div><div class="step-detail" id="step-ask-detail">Listening for response</div></div></div>
+      <div class="step pending" id="step-answer"><div class="step-icon">&#x2705;</div><div class="step-text"><div class="step-title">Response received</div><div class="step-detail" id="step-answer-detail">Transcribing answer</div></div></div>
+    </div>
+    <div class="result-card" id="result-card"><h3>&#x2705; Verification Complete</h3><div id="result-content"></div></div>
+  </div>
+  <div class="features">
+    <div class="feature"><div class="icon">&#x1F916;</div><h4>AI Conversational</h4><p>Natural speech, not robocalls</p></div>
+    <div class="feature"><div class="icon">&#x26A1;</div><h4>Real-time</h4><p>Results in under 30 seconds</p></div>
+    <div class="feature"><div class="icon">&#x1F3AF;</div><h4>Accurate</h4><p>Speech recognition + verification</p></div>
+    <div class="feature"><div class="icon">&#x1F512;</div><h4>Verified</h4><p>Cross-reference with web data</p></div>
+  </div>
+  <div class="try-api">
+    <h3>Use the API</h3>
+    <p>Integrate phone verification into your app with one API call.</p>
+    <code>curl -X POST https://api.localeye.co/v1/phone-verify \<br>&nbsp;&nbsp;-H "X-API-Key: your_key" \<br>&nbsp;&nbsp;-H "Content-Type: application/json" \<br>&nbsp;&nbsp;-d '{"business_phone": "+15125550123",<br>&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;"business_name": "Joe\'s Pizza",<br>&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;"question": "Are you open right now?"}'</code>
+    <div style="margin-top:12px"><span class="badge badge-green">Pro Tier</span><span class="badge badge-cyan">$5/call</span><a href="https://localeye.co" style="color:#06b6d4;font-size:0.85rem;margin-left:8px">Get API Key &#x2192;</a></div>
+  </div>
+</div>
+<footer><p>A <a href="https://brandbooststudio.co">BrandBoost Studio</a> product &bull; <a href="https://localeye.co">Local-Eye</a></p></footer>
+<script>
+document.getElementById('question-select').addEventListener('change', function() {
+  document.getElementById('custom-question-group').style.display = this.value === 'custom' ? 'block' : 'none';
+});
+
+function advanceStep(stepId) {
+  var steps = ['step-init', 'step-ring', 'step-ask', 'step-answer'];
+  var idx = steps.indexOf(stepId);
+  for (var i = 0; i < idx; i++) { document.getElementById(steps[i]).className = 'step done'; }
+  document.getElementById(stepId).className = 'step active';
+}
+function completeStep(stepId) { document.getElementById(stepId).className = 'step done'; }
+
+async function startCall() {
+  var phone = document.getElementById('phone-input').value.trim();
+  var businessName = document.getElementById('business-name').value.trim();
+  var questionSelect = document.getElementById('question-select').value;
+  var question = questionSelect === 'custom' ? document.getElementById('custom-question').value.trim() : questionSelect;
+  if (!phone) { alert('Please enter a phone number'); return; }
+  var btn = document.getElementById('call-btn');
+  var progressArea = document.getElementById('progress-area');
+  var resultCard = document.getElementById('result-card');
+  btn.disabled = true;
+  btn.innerHTML = '\u23F3 Calling...';
+  progressArea.classList.add('active');
+  resultCard.classList.remove('active');
+  ['step-init','step-ring','step-ask','step-answer'].forEach(function(id){document.getElementById(id).className='step pending';});
+  try {
+    advanceStep('step-init');
+    document.getElementById('step-init-detail').textContent = 'Getting authorization...';
+    var tokenResp = await fetch('/v1/playground/token', {method: 'POST'});
+    if (!tokenResp.ok) throw new Error('Failed to get token');
+    var tokenData = await tokenResp.json();
+    if (!tokenData.token) throw new Error('No token received');
+    advanceStep('step-ring');
+    document.getElementById('step-ring-detail').textContent = 'Calling ' + (businessName || phone) + '...';
+    var body = {business_phone: phone, question: question};
+    if (businessName) body.business_name = businessName;
+    var resp = await fetch('/v1/playground/phone-verify', {
+      method: 'POST',
+      headers: {'Content-Type': 'application/json', 'X-Playground-Token': tokenData.token},
+      body: JSON.stringify(body)
+    });
+    var data = await resp.json();
+    if (!resp.ok) {
+      var errMsg = data.detail ? (typeof data.detail === 'string' ? data.detail : (data.detail.message || JSON.stringify(data.detail))) : 'Verification failed';
+      throw new Error(errMsg);
+    }
+    advanceStep('step-ask');
+    document.getElementById('step-ask-detail').textContent = 'Asking: "' + question + '"';
+    var callSid = data.call_sid;
+    var verification = null;
+    var attempts = 0;
+    while (attempts < 45) {
+      await new Promise(function(r){setTimeout(r, 1000);});
+      try {
+        var pollResp = await fetch('/v1/playground/phone-verify/' + callSid, {headers: {'X-Playground-Token': tokenData.token}});
+        if (pollResp.ok) {
+          verification = await pollResp.json();
+          if (verification.transcription || verification.status === 'answered' || verification.status === 'completed') break;
+        }
+      } catch(e) {}
+      attempts++;
+    }
+    completeStep('step-ask');
+    advanceStep('step-answer');
+    if (verification && verification.transcription) {
+      document.getElementById('step-answer-detail').textContent = '"' + verification.transcription + '"';
+    } else if (verification) {
+      document.getElementById('step-answer-detail').textContent = 'Call ' + verification.status;
+    } else {
+      document.getElementById('step-answer-detail').textContent = 'Transcription processing...';
+    }
+    completeStep('step-answer');
+    resultCard.classList.add('active');
+    var html = '';
+    html += '<div class="detail-row"><span class="detail-label">Phone</span><span class="detail-value">' + (data.phone || phone) + '</span></div>';
+    if (businessName) html += '<div class="detail-row"><span class="detail-label">Business</span><span class="detail-value">' + businessName + '</span></div>';
+    html += '<div class="detail-row"><span class="detail-label">Question</span><span class="detail-value">' + question + '</span></div>';
+    html += '<div class="detail-row"><span class="detail-label">Status</span><span class="detail-value" style="color:#22c55e">' + (data.status || 'initiated').replace(/_/g, ' ') + '</span></div>';
+    html += '<div class="detail-row"><span class="detail-label">Call ID</span><span class="detail-value" style="font-size:0.75rem;font-family:monospace">' + callSid + '</span></div>';
+    html += '<div class="detail-row"><span class="detail-label">Response Time</span><span class="detail-value">' + (data.response_time_ms || '?') + 'ms</span></div>';
+    if (verification && verification.transcription) {
+      html += '<div style="margin-top:16px"><strong style="color:#22c55e">Live Transcription:</strong></div>';
+      html += '<div class="transcript-box">';
+      html += '<span class="ai">\uD83E\uDD16 AI:</span> "' + question + '"\n';
+      html += '<span class="business">\uD83D\uDCDE Business:</span> "' + verification.transcription + '"';
+      html += '</div>';
+    } else {
+      html += '<div style="margin-top:16px;text-align:center;color:#06b6d4">\u23F3 Transcription processing... The business answered and our AI captured the response.</div>';
+      html += '<div style="margin-top:8px;text-align:center;color:#8890a8;font-size:0.85rem">Full transcription will be available shortly. Check back or refresh.</div>';
+    }
+    document.getElementById('result-content').innerHTML = html;
+  } catch(e) {
+    resultCard.classList.add('active');
+    document.getElementById('result-content').innerHTML = '<p style="color:#f59e0b">\u26A0\uFE0F ' + e.message + '</p><p style="color:#8890a8;font-size:0.85rem;margin-top:8px">Need help? <a href="https://localeye.co" style="color:#06b6d4">Contact us</a></p>';
+    ['step-init','step-ring','step-ask','step-answer'].forEach(function(id){document.getElementById(id).className='step pending';});
+  }
+  btn.disabled = false;
+  btn.innerHTML = '\uD83D\uDCDE Start Verification Call';
+}
+document.getElementById('phone-input').addEventListener('keypress', function(e) { if (e.key === 'Enter') startCall(); });
+</script>
+</body>
+</html>
