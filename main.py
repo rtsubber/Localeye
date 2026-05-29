@@ -491,15 +491,37 @@ async def phone_verify_demo_page():
 # --- Protected Docs (require API key) ---
 @app.get("/docs", include_in_schema=False)
 async def swagger_ui(key_data: dict = Depends(get_api_key)):
-    """Swagger UI — requires API key."""
-    from fastapi.openapi.docs import get_swagger_ui_html
-    return get_swagger_ui_html(openapi_url="/openapi.json?key_id=" + key_data["key_id"], title="Local-Eye API - Swagger UI")
+    """Swagger UI — requires API key.
+
+    The OpenAPI spec is embedded directly into the page (Swagger UI's `spec`
+    option) rather than fetched from `/openapi.json?key_id=...`. That avoids
+    putting the credential in a URL query string, where it would be captured by
+    browser history, server access logs, and Referer headers.
+    """
+    spec = json.dumps(_build_openapi(key_data["tier"]))
+    html = f"""<!DOCTYPE html>
+<html><head><title>Local-Eye API - Swagger UI</title>
+<link rel="stylesheet" href="https://cdn.jsdelivr.net/npm/swagger-ui-dist@5/swagger-ui.css">
+</head><body><div id="swagger-ui"></div>
+<script src="https://cdn.jsdelivr.net/npm/swagger-ui-dist@5/swagger-ui-bundle.js"></script>
+<script>
+  window.ui = SwaggerUIBundle({{ spec: {spec}, dom_id: '#swagger-ui' }});
+</script></body></html>"""
+    return HTMLResponse(content=html)
 
 @app.get("/redoc", include_in_schema=False)
 async def redoc_ui(key_data: dict = Depends(get_api_key)):
-    """ReDoc — requires API key."""
-    from fastapi.openapi.docs import get_redoc_html
-    return get_redoc_html(openapi_url="/openapi.json?key_id=" + key_data["key_id"], title="Local-Eye API - ReDoc")
+    """ReDoc — requires API key. Spec embedded inline (no key in the URL)."""
+    spec = json.dumps(_build_openapi(key_data["tier"]))
+    html = f"""<!DOCTYPE html>
+<html><head><title>Local-Eye API - ReDoc</title>
+<meta charset="utf-8"/><meta name="viewport" content="width=device-width, initial-scale=1">
+</head><body><div id="redoc"></div>
+<script src="https://cdn.jsdelivr.net/npm/redoc@next/bundles/redoc.standalone.js"></script>
+<script>
+  Redoc.init({spec}, {{}}, document.getElementById('redoc'));
+</script></body></html>"""
+    return HTMLResponse(content=html)
 
 @app.get("/openapi.json", include_in_schema=False)
 async def openapi_schema(key_data: dict = Depends(get_api_key)):
