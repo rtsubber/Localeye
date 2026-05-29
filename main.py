@@ -15,6 +15,11 @@ import json
 import time
 import hashlib
 import asyncio
+import logging
+from xml.sax.saxutils import escape as _xml_escape
+
+logging.basicConfig(level=os.getenv("LOG_LEVEL", "INFO"))
+logger = logging.getLogger("localeye")
 from pathlib import Path
 from contextlib import asynccontextmanager
 from urllib.parse import urlparse
@@ -160,26 +165,14 @@ def verify_skyfire_token(token: str, jwks: dict) -> dict | None:
                 )
                 return payload
     except ImportError:
-        # Fallback: manual JWT verification without pyjwt
-        import base64, json, hashlib
-        try:
-            parts = token.split(".")
-            if len(parts) != 3:
-                return None
-            # Decode header and payload (don't verify sig without proper lib)
-            header_b64 = parts[0] + "=" * (4 - len(parts[0]) % 4)
-            payload_b64 = parts[1] + "=" * (4 - len(parts[1]) % 4)
-            header_data = json.loads(base64.urlsafe_b64decode(header_b64))
-            payload_data = json.loads(base64.urlsafe_b64decode(payload_b64))
-            # Check token type
-            if header_data.get("typ") not in ("kya+jwt", "pay+jwt", "kya-pay+jwt"):
-                return None
-            # Check expiration
-            if payload_data.get("exp", 0) < time.time():
-                return None
-            return payload_data
-        except Exception:
-            return None
+        # SECURITY: never accept a token whose signature we cannot verify.
+        # If pyjwt is not installed we MUST fail closed rather than trust an
+        # unsigned, attacker-supplied JWT.
+        logger.error(
+            "pyjwt is not installed — cannot verify Skyfire token signatures. "
+            "Install pyjwt and restart. Rejecting token."
+        )
+        return None
     except Exception:
         return None
 
@@ -272,6 +265,31 @@ def is_safe_path(base_dir: Path, file_path: Path) -> bool:
         return base_dir.resolve() in file_path.resolve().parents or base_dir.resolve() == file_path.resolve().parent
     except (ValueError, RuntimeError):
         return False
+
+
+async def safe_get(url: str, *, headers: dict | None = None, params: dict | None = None,
+                   timeout: float = 30.0, max_redirects: int = 5) -> "httpx.Response":
+    """Fetch a URL with SSRF protection applied to EVERY hop.
+
+    httpx's follow_redirects=True would re-resolve and follow Location headers
+    without re-checking them, allowing a public URL to redirect into private
+    space (cloud metadata, etc). We follow redirects manually and validate each
+    target with is_url_blocked before requesting it.
+    """
+    current = url
+    async with httpx.AsyncClient(follow_redirects=False, timeout=timeout) as client:
+        for _ in range(max_redirects + 1):
+            blocked, reason = is_url_blocked(current)
+            if blocked:
+                raise PermissionError(f"URL not allowed: {reason}")
+            resp = await client.get(current, headers=headers, params=params)
+            if resp.is_redirect and resp.headers.get("location"):
+                # Resolve relative redirects against the current URL
+                current = str(resp.next_request.url) if resp.next_request else resp.headers["location"]
+                params = None  # query already encoded into the redirect target
+                continue
+            return resp
+    raise PermissionError("Too many redirects")
 
 
 # --- Models ---
@@ -656,16 +674,15 @@ async def playground_verify(request: Request, body: VerifyRequest):
     # Perform the actual verification
     start = time.time()
     try:
-        async with httpx.AsyncClient(
-            follow_redirects=True,
+        resp = await safe_get(
+            body.url,
             timeout=30.0,
             headers={
                 "User-Agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/125.0.0.0 Safari/537.36",
                 "Accept": "text/html,application/xhtml+xml,application/xml;q=0.9,*/*;q=0.8",
                 "Accept-Language": "en-US,en;q=0.9",
             },
-        ) as client:
-            resp = await client.get(body.url)
+        )
         
         elapsed = (time.time() - start) * 1000
         text = resp.text
@@ -687,6 +704,8 @@ async def playground_verify(request: Request, body: VerifyRequest):
         }
         return result
     
+    except PermissionError as e:
+        raise HTTPException(status_code=400, detail=json.dumps({"error": "url_blocked", "message": str(e)}))
     except httpx.RequestError as e:
         raise HTTPException(status_code=502, detail=f"Failed to fetch URL: {str(e)}")
 
@@ -795,16 +814,14 @@ async def playground_phone_vet(request: Request, body: PhoneVetRequest):
             if blocked_url:
                 results["reasons"].append(f"URL not allowed for cross-reference: {reason}")
             else:
-                async with httpx.AsyncClient() as http:
-                    resp = await http.get(
-                        body.claimed_url,
-                        headers={"User-Agent": "Local-Eye/1.0 (Scam Verification)"},
-                        timeout=15,
-                        follow_redirects=True
-                    )
+                resp = await safe_get(
+                    body.claimed_url,
+                    headers={"User-Agent": "Local-Eye/1.0 (Scam Verification)"},
+                    timeout=15,
+                )
                 if resp.status_code == 200:
                     phone_patterns = _re.findall(
-                        r'(?:\\+?1[-.\\s]?)?(?:\\([0-9]{3}\\)|[0-9]{3})[-.\\s]?[0-9]{3}[-.\\s]?[0-9]{4}',
+                        r'(?:\+?1[-.\s]?)?(?:\([0-9]{3}\)|[0-9]{3})[-.\s]?[0-9]{3}[-.\s]?[0-9]{4}',
                         resp.text
                     )
                     found_numbers = []
@@ -833,17 +850,15 @@ async def playground_phone_vet(request: Request, body: PhoneVetRequest):
         company_slug = body.claimed_company.lower().replace(" ", "").replace("&", "and").replace(".", "").replace("'", "")
         auto_url = f"https://www.{company_slug}.com"
         try:
-            async with httpx.AsyncClient() as http:
-                resp = await http.get(
-                    auto_url,
-                    headers={"User-Agent": "Local-Eye/1.0 (Scam Verification)"},
-                    timeout=10,
-                    follow_redirects=True
-                )
+            resp = await safe_get(
+                auto_url,
+                headers={"User-Agent": "Local-Eye/1.0 (Scam Verification)"},
+                timeout=10,
+            )
             if resp.status_code == 200:
                 results["reasons"].append(f"Auto-checked {auto_url} (inferred from company name)")
                 phone_patterns = _re.findall(
-                    r'(?:\\+?1[-.\\s]?)?(?:\\([0-9]{3}\\)|[0-9]{3})[-.\\s]?[0-9]{3}[-.\\s]?[0-9]{4}',
+                    r'(?:\+?1[-.\s]?)?(?:\([0-9]{3}\)|[0-9]{3})[-.\s]?[0-9]{3}[-.\s]?[0-9]{4}',
                     resp.text
                 )
                 found_numbers = []
@@ -960,10 +975,10 @@ async def playground_phone_verify(request: Request):
         from twilio.rest import Client
         client = Client(TWILIO_ACCOUNT_SID, TWILIO_AUTH_TOKEN)
         
-        business_label = f" from {business_name}" if business_name else ""
+        business_label = f" from {_xml_escape(business_name)}" if business_name else ""
         gather_prompt = (
             f"Hi there, I have a quick question{business_label}. "
-            f"{question} "
+            f"{_xml_escape(question)} "
         )
         twiml = f'''<Response>
             <Gather input="speech" timeout="10" speechTimeout="3" action="https://api.localeye.co/v1/webhook/twilio/gather?call_sid={{CallSid}}" method="POST" speechModel="phone_call">
@@ -1154,7 +1169,9 @@ async def send_telegram(msg: str):
 async def admin_signups(request: Request, days: int = 7):
     """List recent signups. Requires admin API key."""
     key = request.headers.get("x-api-key", "")
-    if key != ADMIN_API_KEY:
+    # Fail closed: never allow access when the admin key is unconfigured, and use
+    # a constant-time comparison to avoid leaking the key via timing.
+    if not ADMIN_API_KEY or not hmac.compare_digest(key, ADMIN_API_KEY):
         raise HTTPException(status_code=401, detail="Admin access required")
     import aiosqlite
     from db import DB_PATH
@@ -1300,16 +1317,15 @@ async def verify_web_presence(
 
     start = time.time()
     try:
-        async with httpx.AsyncClient(
-            follow_redirects=True,
+        resp = await safe_get(
+            request.url,
             timeout=30.0,
             headers={
                 "User-Agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/125.0.0.0 Safari/537.36",
                 "Accept": "text/html,application/xhtml+xml,application/xml;q=0.9,*/*;q=0.8",
                 "Accept-Language": "en-US,en;q=0.9",
             },
-        ) as client:
-            resp = await client.get(request.url)
+        )
 
         elapsed = (time.time() - start) * 1000
         text = resp.text
@@ -1335,6 +1351,8 @@ async def verify_web_presence(
 
         return result
 
+    except PermissionError as e:
+        raise HTTPException(status_code=400, detail=json.dumps({"error": "url_blocked", "message": str(e)}))
     except httpx.RequestError as e:
         raise HTTPException(status_code=502, detail=f"Failed to fetch URL: {str(e)}")
 
@@ -1470,7 +1488,8 @@ async def phone_verify(
     if request.mode == "maya":
         try:
             # Check if Maya is running
-            maya_health = await httpx.AsyncClient().get("http://localhost:5003/", timeout=5.0)
+            async with httpx.AsyncClient() as _mc:
+                maya_health = await _mc.get("http://localhost:5003/", timeout=5.0)
             if maya_health and maya_health.status_code == 200:
                 from twilio.rest import Client
                 maya_client = Client(TWILIO_ACCOUNT_SID, TWILIO_AUTH_TOKEN)
@@ -1479,15 +1498,16 @@ async def phone_verify(
                 
                 # Create outbound call that streams to Maya's WebSocket
                 # Maya will see callType=verification and use conversational AI
+                _attr = lambda v: _xml_escape(str(v), {'"': "&quot;"})
                 maya_twiml = f"""<?xml version="1.0" encoding="UTF-8"?>
 <Response>
   <Connect>
     <Stream url="{MAYA_WS_URL}">
-      <Parameter name="from" value="{TWILIO_PHONE_NUMBER}" />
-      <Parameter name="to" value="{request.business_phone}" />
+      <Parameter name="from" value="{_attr(TWILIO_PHONE_NUMBER)}" />
+      <Parameter name="to" value="{_attr(request.business_phone)}" />
       <Parameter name="callType" value="verification" />
-      <Parameter name="businessName" value="{request.business_name}" />
-      <Parameter name="question" value="{request.question}" />
+      <Parameter name="businessName" value="{_attr(request.business_name)}" />
+      <Parameter name="question" value="{_attr(request.question)}" />
     </Stream>
   </Connect>
   <Pause length="120" />
@@ -1552,10 +1572,10 @@ async def phone_verify(
         # 2. Gather response (speech or DTMF)
         # 3. Record the answer
         # 4. Hang up
-        business_label = f" from {request.business_name}" if request.business_name else ""
+        business_label = f" from {_xml_escape(request.business_name)}" if request.business_name else ""
         gather_prompt = (
             f"Hi there, I have a quick question{business_label}. "
-            f"{request.question} "
+            f"{_xml_escape(request.question)} "
         )
         twiml = f'''<Response>
             <Gather input="speech" timeout="10" speechTimeout="3" action="https://api.localeye.co/v1/webhook/twilio/gather?call_sid={{CallSid}}" method="POST" speechModel="phone_call">
@@ -1700,14 +1720,12 @@ async def phone_vet(
     # Step 2: Cross-reference against company's official numbers
     if request.claimed_company and request.claimed_url:
         try:
-            # Scrape the company's website for phone numbers
-            async with httpx.AsyncClient() as http:
-                resp = await http.get(
-                    request.claimed_url,
-                    headers={"User-Agent": "Local-Eye/1.0 (Scam Verification)"},
-                    timeout=15,
-                    follow_redirects=True
-                )
+            # Scrape the company's website for phone numbers (SSRF-validated on every hop)
+            resp = await safe_get(
+                request.claimed_url,
+                headers={"User-Agent": "Local-Eye/1.0 (Scam Verification)"},
+                timeout=15,
+            )
             
             if resp.status_code == 200:
                 import re
@@ -1751,17 +1769,15 @@ async def phone_vet(
         try:
             blocked_url, reason = is_url_blocked(auto_url)
             if not blocked_url:
-                async with httpx.AsyncClient() as http:
-                    resp = await http.get(
-                        auto_url,
-                        headers={"User-Agent": "Local-Eye/1.0 (Scam Verification)"},
-                        timeout=10,
-                        follow_redirects=True
-                    )
+                resp = await safe_get(
+                    auto_url,
+                    headers={"User-Agent": "Local-Eye/1.0 (Scam Verification)"},
+                    timeout=10,
+                )
                 if resp.status_code == 200:
                     results["reasons"].append(f"Auto-checked {auto_url} (inferred from company name)")
                     phone_patterns = _re.findall(
-                        r'(?:\\+?1[-.\\s]?)?(?:\\([0-9]{3}\\)|[0-9]{3})[-.\\s]?[0-9]{3}[-.\\s]?[0-9]{4}',
+                        r'(?:\+?1[-.\s]?)?(?:\([0-9]{3}\)|[0-9]{3})[-.\s]?[0-9]{3}[-.\s]?[0-9]{4}',
                         resp.text
                     )
                     found_numbers = []
@@ -1906,10 +1922,36 @@ async def phone_verify_result(call_sid: str, key_data: dict = Depends(get_api_ke
 
 # --- Twilio Webhooks ---
 
+# Twilio signs each webhook with X-Twilio-Signature over the exact public URL it
+# called plus the POST params. We must validate this or anyone can forge call
+# results. Behind a proxy the inbound URL scheme/host differ from what Twilio
+# signed, so the public base is configurable.
+TWILIO_WEBHOOK_BASE_URL = os.getenv("TWILIO_WEBHOOK_BASE_URL", "https://api.localeye.co")
+
+
+async def verify_twilio_request(request: Request, form) -> None:
+    """Raise 403 unless the request carries a valid X-Twilio-Signature."""
+    if not TWILIO_AUTH_TOKEN:
+        raise HTTPException(status_code=503, detail="Twilio not configured")
+    try:
+        from twilio.request_validator import RequestValidator
+    except ImportError:
+        logger.error("twilio package not installed — cannot validate webhook signatures")
+        raise HTTPException(status_code=503, detail="Webhook validation unavailable")
+    signature = request.headers.get("X-Twilio-Signature", "")
+    url = TWILIO_WEBHOOK_BASE_URL.rstrip("/") + request.url.path
+    if request.url.query:
+        url += "?" + request.url.query
+    validator = RequestValidator(TWILIO_AUTH_TOKEN)
+    if not validator.validate(url, dict(form), signature):
+        raise HTTPException(status_code=403, detail="Invalid Twilio signature")
+
+
 @app.post("/v1/webhook/twilio/gather")
 async def twilio_gather(request: Request):
     """Handle speech recognition results from Twilio Gather."""
     form = await request.form()
+    await verify_twilio_request(request, form)
     call_sid = form.get("CallSid", "unknown")
     speech_result = form.get("SpeechResult", "")
     confidence = float(form.get("Confidence", "0"))
@@ -2014,6 +2056,7 @@ async def transcribe_call_recording(call_sid: str):
 async def twilio_status(request: Request):
     """Handle Twilio call status callbacks."""
     form = await request.form()
+    await verify_twilio_request(request, form)
     call_sid = form.get("CallSid", "unknown")
     call_status = form.get("CallStatus", "unknown")
     duration = form.get("CallDuration", "")
@@ -2056,6 +2099,7 @@ async def twilio_status(request: Request):
 async def twilio_transcribe(request: Request):
     """Handle Twilio transcription callbacks (legacy Record+Transcribe flow)."""
     form = await request.form()
+    await verify_twilio_request(request, form)
     call_sid = form.get("CallSid", "unknown")
     transcription_text = form.get("TranscriptionText", "")
     transcription_status = form.get("TranscriptionStatus", "unknown")
