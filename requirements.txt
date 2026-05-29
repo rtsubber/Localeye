@@ -3,7 +3,7 @@ uvicorn==0.34.0
 stripe==11.5.0
 httpx==0.28.1
 pydantic==2.10.4
-python-dotenv==1.0.1
+python-dotenv==1.2.2
 psutil==6.1.1
 Pillow==11.1.0
 playwright==1.52.0
