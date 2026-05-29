@@ -15,6 +15,7 @@ CREATE TABLE IF NOT EXISTS api_keys (
     stripe_subscription_id TEXT,
     tier TEXT DEFAULT 'free',
     created_at REAL,
+    registration_ip TEXT,
     active INTEGER DEFAULT 1
 );
 
@@ -72,7 +73,14 @@ CREATE TABLE IF NOT EXISTS scam_reports (
 
 async def init_db():
     async with aiosqlite.connect(DB_PATH) as db:
+        await db.execute("PRAGMA journal_mode=WAL")
         await db.executescript(CREATE_TABLES)
+        # Idempotent migration: add registration_ip to databases created before
+        # this column existed. SQLite has no "ADD COLUMN IF NOT EXISTS".
+        try:
+            await db.execute("ALTER TABLE api_keys ADD COLUMN registration_ip TEXT")
+        except Exception:
+            pass  # Column already exists
         await db.commit()
 
 async def create_api_key(email: str, tier: str = "free", stripe_customer_id: str = None, registration_ip: str = None) -> dict:
@@ -123,28 +131,23 @@ async def validate_key(key_id: str) -> dict | None:
 
 async def check_rate_limit(key_id: str, daily_limit: int) -> bool:
     today = time.strftime("%Y-%m-%d")
+    # Unlimited tiers (daily_limit < 0) always pass.
+    if daily_limit is not None and daily_limit < 0:
+        return True
     async with aiosqlite.connect(DB_PATH) as db:
-        async with db.execute(
-            "SELECT count FROM daily_usage WHERE key_id = ? AND date = ?",
+        # Ensure a row exists for today, then increment atomically only if under
+        # the limit. The single UPDATE avoids the read-then-write race where two
+        # concurrent requests both observe count < limit and both proceed.
+        await db.execute(
+            "INSERT OR IGNORE INTO daily_usage (key_id, date, count) VALUES (?, ?, 0)",
             (key_id, today),
-        ) as cursor:
-            row = await cursor.fetchone()
-            if row is None:
-                await db.execute(
-                    "INSERT INTO daily_usage (key_id, date, count) VALUES (?, ?, 1)",
-                    (key_id, today),
-                )
-                await db.commit()
-                return True
-            count = row[0]
-            if count >= daily_limit:
-                return False
-            await db.execute(
-                "UPDATE daily_usage SET count = count + 1 WHERE key_id = ? AND date = ?",
-                (key_id, today),
-            )
-            await db.commit()
-            return True
+        )
+        cursor = await db.execute(
+            "UPDATE daily_usage SET count = count + 1 WHERE key_id = ? AND date = ? AND count < ?",
+            (key_id, today, daily_limit),
+        )
+        await db.commit()
+        return cursor.rowcount > 0
 
 async def log_usage(key_id: str, endpoint: str, url: str, status_code: int, response_time_ms: float):
     async with aiosqlite.connect(DB_PATH) as db:
