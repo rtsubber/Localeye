@@ -69,6 +69,31 @@ CREATE TABLE IF NOT EXISTS scam_reports (
     reasons TEXT,
     created_at REAL
 );
+
+CREATE TABLE IF NOT EXISTS fingerprints (
+    fingerprint_hash TEXT PRIMARY KEY,
+    source_app TEXT,
+    ip_address TEXT,
+    user_agent TEXT,
+    components_json TEXT,
+    first_seen REAL,
+    last_seen REAL,
+    visit_count INTEGER DEFAULT 1
+);
+
+CREATE TABLE IF NOT EXISTS fingerprint_usage (
+    id INTEGER PRIMARY KEY AUTOINCREMENT,
+    fingerprint_hash TEXT NOT NULL,
+    source_app TEXT,
+    action TEXT,
+    created_at REAL,
+    FOREIGN KEY (fingerprint_hash) REFERENCES fingerprints(fingerprint_hash)
+);
+
+CREATE INDEX IF NOT EXISTS idx_fp_hash ON fingerprints(fingerprint_hash);
+CREATE INDEX IF NOT EXISTS idx_fp_source ON fingerprints(source_app);
+CREATE INDEX IF NOT EXISTS idx_fp_usage_hash ON fingerprint_usage(fingerprint_hash);
+CREATE INDEX IF NOT EXISTS idx_fp_usage_app ON fingerprint_usage(source_app);
 """
 
 async def init_db():
@@ -233,6 +258,85 @@ async def get_scam_report_count(phone: str) -> int:
         ) as cursor:
             row = await cursor.fetchone()
             return row[0] if row else 0
+
+
+# ── Fingerprint Functions ──
+
+async def upsert_fingerprint(fingerprint_hash: str, source_app: str, ip_address: str, user_agent: str, components_json: str) -> dict:
+    """Insert or update a fingerprint. Returns {hash, is_new, visit_count}."""
+    now = time.time()
+    async with aiosqlite.connect(DB_PATH) as db:
+        # Check if fingerprint exists
+        async with db.execute(
+            "SELECT fingerprint_hash, visit_count FROM fingerprints WHERE fingerprint_hash = ?",
+            (fingerprint_hash,),
+        ) as cursor:
+            existing = await cursor.fetchone()
+
+        if existing:
+            # Update last_seen and increment visit_count
+            new_count = existing[1] + 1
+            await db.execute(
+                "UPDATE fingerprints SET last_seen = ?, visit_count = ?, ip_address = ?, user_agent = ? WHERE fingerprint_hash = ?",
+                (now, new_count, ip_address, user_agent, fingerprint_hash),
+            )
+            await db.commit()
+            return {"hash": fingerprint_hash, "is_new": False, "visit_count": new_count, "first_seen": None}
+        else:
+            # Insert new fingerprint
+            await db.execute(
+                "INSERT INTO fingerprints (fingerprint_hash, source_app, ip_address, user_agent, components_json, first_seen, last_seen, visit_count) VALUES (?, ?, ?, ?, ?, ?, ?, 1)",
+                (fingerprint_hash, source_app, ip_address, user_agent, components_json, now, now),
+            )
+            await db.commit()
+            return {"hash": fingerprint_hash, "is_new": True, "visit_count": 1, "first_seen": now}
+
+
+async def log_fingerprint_action(fingerprint_hash: str, source_app: str, action: str):
+    """Log a fingerprint-tracked action (e.g., 'free_search', 'premium_search', 'login')."""
+    async with aiosqlite.connect(DB_PATH) as db:
+        await db.execute(
+            "INSERT INTO fingerprint_usage (fingerprint_hash, source_app, action, created_at) VALUES (?, ?, ?, ?)",
+            (fingerprint_hash, source_app, action, time.time()),
+        )
+        await db.commit()
+
+
+async def get_fingerprint_usage(fingerprint_hash: str, source_app: str = None, action: str = None) -> int:
+    """Count how many times a fingerprint has performed an action. Filters by app and action if provided."""
+    async with aiosqlite.connect(DB_PATH) as db:
+        if source_app and action:
+            query = "SELECT COUNT(*) FROM fingerprint_usage WHERE fingerprint_hash = ? AND source_app = ? AND action = ?"
+            params = (fingerprint_hash, source_app, action)
+        elif source_app:
+            query = "SELECT COUNT(*) FROM fingerprint_usage WHERE fingerprint_hash = ? AND source_app = ?"
+            params = (fingerprint_hash, source_app)
+        elif action:
+            query = "SELECT COUNT(*) FROM fingerprint_usage WHERE fingerprint_hash = ? AND action = ?"
+            params = (fingerprint_hash, action)
+        else:
+            query = "SELECT COUNT(*) FROM fingerprint_usage WHERE fingerprint_hash = ?"
+            params = (fingerprint_hash,)
+
+        async with db.execute(query, params) as cursor:
+            row = await cursor.fetchone()
+            return row[0] if row else 0
+
+
+async def get_fingerprint(fingerprint_hash: str) -> dict | None:
+    """Get fingerprint record by hash."""
+    async with aiosqlite.connect(DB_PATH) as db:
+        async with db.execute(
+            "SELECT fingerprint_hash, source_app, ip_address, user_agent, first_seen, last_seen, visit_count FROM fingerprints WHERE fingerprint_hash = ?",
+            (fingerprint_hash,),
+        ) as cursor:
+            row = await cursor.fetchone()
+            if row:
+                return {
+                    "hash": row[0], "source_app": row[1], "ip_address": row[2],
+                    "user_agent": row[3], "first_seen": row[4], "last_seen": row[5], "visit_count": row[6]
+                }
+    return None
 
 TIER_LIMITS = {
     "free": {"daily": 50, "monthly": 150, "per_call": 0.00},

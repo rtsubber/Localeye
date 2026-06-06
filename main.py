@@ -32,7 +32,7 @@ from fastapi.middleware.cors import CORSMiddleware
 from fastapi.responses import HTMLResponse, JSONResponse, FileResponse
 from pydantic import BaseModel, Field
 
-from db import init_db, create_api_key, validate_key, check_rate_limit, log_usage, TIER_LIMITS, create_phone_verification, update_phone_verification, get_phone_verification as db_get_phone_verification, create_scam_report, get_scam_reports, get_scam_report_count
+from db import init_db, create_api_key, validate_key, check_rate_limit, log_usage, TIER_LIMITS, create_phone_verification, update_phone_verification, get_phone_verification as db_get_phone_verification, create_scam_report, get_scam_reports, get_scam_report_count, upsert_fingerprint as db_upsert_fingerprint, log_fingerprint_action as db_log_fingerprint_action, get_fingerprint_usage as db_get_fingerprint_usage, get_fingerprint as db_get_fingerprint
 
 # --- Config ---
 STRIPE_SECRET_KEY = os.getenv("STRIPE_SECRET_KEY", "")
@@ -2142,6 +2142,153 @@ async def twilio_transcribe(request: Request):
     )
 
     return JSONResponse(content={"status": "ok"})
+
+# ── Browser Fingerprinting (Device Identity for AI Agents) ──
+
+class FingerprintRequest(BaseModel):
+    """Client sends fingerprint components; server hashes and stores."""
+    components: dict = Field(..., description="Browser fingerprint components (canvas, webgl, fonts, etc.)")
+    source_app: str = Field("unknown", max_length=50, description="App identifier (e.g., 'clozr', 'cleaneats')")
+    action: str | None = Field(None, max_length=50, description="Action being tracked (e.g., 'free_search', 'login')")
+
+
+class FingerprintCheckRequest(BaseModel):
+    """Check if a fingerprint has exceeded free tier limits."""
+    fingerprint_hash: str = Field(..., min_length=64, max_length=64, description="SHA-256 hex hash of fingerprint components")
+    source_app: str = Field("unknown", max_length=50, description="App identifier")
+    action: str | None = Field(None, max_length=50, description="Action to check count for")
+    limit: int = Field(5, description="Max allowed actions before paywall")
+
+
+def _hash_components(components: dict) -> str:
+    """Deterministic SHA-256 hash of fingerprint components."""
+    import json as _json
+    # Sort keys for deterministic hashing
+    canonical = _json.dumps(components, sort_keys=True, separators=(',', ':'))
+    return hashlib.sha256(canonical.encode()).hexdigest()
+
+
+@app.post("/v1/fingerprint")
+async def fingerprint_register(
+    request: Request,
+    body: FingerprintRequest,
+    key_data: dict | None = Depends(get_optional_key),
+):
+    """
+    Register or update a device fingerprint.
+
+    Send browser fingerprint components (canvas, webgl, fonts, timezone, screen, etc.)
+    and receive a deterministic hash back. Server stores the hash + metadata for
+    free-tier abuse prevention and device identity.
+
+    **How it works:**
+    1. Client collects ~30 browser signals (FingerprintJS-style)
+    2. Sends them as `components` dict
+    3. Server hashes with SHA-256 → deterministic fingerprint ID
+    4. Server stores hash + tracks visit count + actions
+    5. Use `/v1/fingerprint/check` to enforce free tier limits
+
+    **Privacy:** Only the hash is stored long-term. Raw components are kept for
+    debugging but can be purged. No PII is collected.
+
+    **Pricing:** Included with all tiers. Free tier: 100 fingerprint registrations/day.
+    """
+    start = time.time()
+    client_ip = request.client.host if request.client else "unknown"
+    user_agent = request.headers.get("user-agent", "")
+
+    # Compute deterministic hash
+    fp_hash = _hash_components(body.components)
+
+    # Upsert fingerprint in DB
+    result = await db_upsert_fingerprint(
+        fingerprint_hash=fp_hash,
+        source_app=body.source_app,
+        ip_address=client_ip,
+        user_agent=user_agent,
+        components_json=json.dumps(body.components, sort_keys=True),
+    )
+
+    # Log action if specified
+    if body.action:
+        await db_log_fingerprint_action(fp_hash, body.source_app, body.action)
+
+    # Log usage if API key present
+    if key_data:
+        await log_usage(key_data["key_id"], "/v1/fingerprint", body.source_app, 200, (time.time() - start) * 1000)
+
+    return {
+        "fingerprint_hash": fp_hash,
+        "is_new": result["is_new"],
+        "visit_count": result["visit_count"],
+        "source_app": body.source_app,
+        "action_logged": body.action,
+    }
+
+
+@app.post("/v1/fingerprint/check")
+async def fingerprint_check(
+    request: Request,
+    body: FingerprintCheckRequest,
+    key_data: dict | None = Depends(get_optional_key),
+):
+    """
+    Check if a fingerprint has exceeded a free-tier action limit.
+
+    Returns the current action count and whether the limit has been reached.
+    Use this to gate free features: "5 free searches, then pay."
+
+    **Example flow:**
+    1. User visits your app → collect fingerprint → POST /v1/fingerprint
+    2. User performs action → POST /v1/fingerprint/check (limit=5)
+    3. If `remaining <= 0` → show paywall
+    4. If `remaining > 0` → allow action + log it
+
+    **Survives:** localStorage clear, incognito mode, different sessions.
+    **Does not survive:** browser upgrades, hardware changes (by design — that's a different device).
+    """
+    start = time.time()
+
+    # Get usage count
+    count = await db_get_fingerprint_usage(
+        fingerprint_hash=body.fingerprint_hash,
+        source_app=body.source_app,
+        action=body.action,
+    )
+
+    remaining = max(0, body.limit - count)
+    limit_reached = count >= body.limit
+
+    # Log usage if API key present
+    if key_data:
+        await log_usage(key_data["key_id"], "/v1/fingerprint/check", body.source_app, 200, (time.time() - start) * 1000)
+
+    return {
+        "fingerprint_hash": body.fingerprint_hash,
+        "source_app": body.source_app,
+        "action": body.action,
+        "count": count,
+        "limit": body.limit,
+        "remaining": remaining,
+        "limit_reached": limit_reached,
+    }
+
+
+@app.get("/v1/fingerprint/{fingerprint_hash}")
+async def fingerprint_lookup(
+    fingerprint_hash: str,
+    key_data: dict = Depends(get_api_key),
+):
+    """
+    Look up a fingerprint record. Requires API key.
+
+    Returns visit count, first/last seen timestamps, and source app.
+    """
+    fp = await db_get_fingerprint(fingerprint_hash)
+    if not fp:
+        raise HTTPException(404, "Fingerprint not found")
+    return fp
+
 
 # --- Agent Manifest (public — minimal, for discovery only) ---
 @app.get("/.well-known/ai-plugin.json")
