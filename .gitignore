@@ -19,3 +19,4 @@ service-account*.json
 .skyfire_config
 .vercel/
 *.pre-opus-patch
+.vercel

@@ -32,7 +32,19 @@ from fastapi.middleware.cors import CORSMiddleware
 from fastapi.responses import HTMLResponse, JSONResponse, FileResponse
 from pydantic import BaseModel, Field
 
-from db import init_db, create_api_key, validate_key, check_rate_limit, log_usage, TIER_LIMITS, create_phone_verification, update_phone_verification, get_phone_verification as db_get_phone_verification, create_scam_report, get_scam_reports, get_scam_report_count, upsert_fingerprint as db_upsert_fingerprint, log_fingerprint_action as db_log_fingerprint_action, get_fingerprint_usage as db_get_fingerprint_usage, get_fingerprint as db_get_fingerprint
+from db import init_db, create_api_key, validate_key, check_rate_limit, check_monthly_limit, hash_api_key, log_usage, TIER_LIMITS, create_phone_verification, update_phone_verification, get_phone_verification as db_get_phone_verification, create_scam_report, get_scam_reports, get_scam_report_count, upsert_fingerprint as db_upsert_fingerprint, log_fingerprint_action as db_log_fingerprint_action, get_fingerprint_usage as db_get_fingerprint_usage, get_fingerprint as db_get_fingerprint
+
+async def check_rate_and_monthly(key_id: str, limits: dict) -> tuple[bool, str | None]:
+    """Check both daily and monthly rate limits.
+    
+    Returns (allowed, reason) where reason is None if allowed, or the limit type if blocked.
+    """
+    if not await check_rate_limit(key_id, limits["daily"]):
+        return False, "daily_limit"
+    if not await check_monthly_limit(key_id, limits["monthly"]):
+        return False, "monthly_limit"
+    return True, None
+
 
 # --- Config ---
 STRIPE_SECRET_KEY = os.getenv("STRIPE_SECRET_KEY", "")
@@ -432,12 +444,14 @@ async def charge_skyfire_if_applicable(key_data: dict, endpoint: str):
     amount = SKYFIRE_PRICES.get(endpoint, 0.015)
     # Only charge for pay/kya-pay tokens, not kya (identity only)
     if key_data.get("skyfire_token_type") == "kya":
-        # Free tier via Skyfire — check daily rate limit
+        # Free tier via Skyfire — check daily and monthly rate limits
         tier_limits = TIER_LIMITS.get("free", TIER_LIMITS["free"])
-        if not await check_rate_limit(key_data["key_id"], tier_limits["daily"]):
+        allowed, reason = await check_rate_and_monthly(key_data["key_id"], tier_limits)
+        if not allowed:
+            msg = "Monthly limit reached" if reason == "monthly_limit" else "Daily limit reached"
             raise HTTPException(status_code=429, detail=json.dumps({
                 "error": "rate_limit_exceeded",
-                "message": "Free tier daily limit reached. Upgrade for more calls.",
+                "message": f"Free tier {msg}. Upgrade for more calls.",
                 "upgrade_options": [
                     {"tier": "starter", "price": "$29/mo", "calls": "2,000/month", "url": "https://localeye.co/#pricing"},
                 ],
@@ -487,6 +501,216 @@ async def phone_verify_demo_page():
     from fastapi.responses import HTMLResponse as HR
     page = (Path(__file__).parent / "landing" / "phone-verify-demo.html").read_text()
     return HR(content=page, headers={"Cache-Control": "no-cache, no-store, must-revalidate", "Pragma": "no-cache", "Expires": "0"})
+
+@app.get("/privacy", response_class=HTMLResponse)
+async def privacy_page():
+    """Privacy policy page."""
+    from fastapi.responses import HTMLResponse as HR
+    page = (Path(__file__).parent / "landing" / "privacy.html").read_text()
+    return HR(content=page, headers={"Cache-Control": "public, max-age=86400"})
+
+@app.get("/terms", response_class=HTMLResponse)
+async def terms_page():
+    """Terms of service page."""
+    from fastapi.responses import HTMLResponse as HR
+    page = (Path(__file__).parent / "landing" / "terms.html").read_text()
+    return HR(content=page, headers={"Cache-Control": "public, max-age=86400"})
+
+# --- Blog ---
+BLOG_DIR = Path(__file__).parent / "blog"
+
+import markdown as _md
+import re as _blog_re
+from datetime import datetime as _dt
+
+def _parse_blog_post(filepath: Path) -> dict | None:
+    """Parse a markdown blog post with YAML-like frontmatter."""
+    try:
+        content = filepath.read_text(encoding="utf-8")
+    except Exception:
+        return None
+    # Parse frontmatter (simple --- delimited block)
+    meta = {}
+    body = content
+    if content.startswith("---"):
+        parts = content.split("---", 2)
+        if len(parts) >= 3:
+            for line in parts[1].strip().split("\n"):
+                if ":" in line:
+                    key, val = line.split(":", 1)
+                    key = key.strip().lower()
+                    val = val.strip().strip('"').strip("'")
+                    meta[key] = val
+            body = parts[2].strip()
+    if not meta.get("title"):
+        meta["title"] = filepath.stem.replace("-", " ").title()
+    if not meta.get("slug"):
+        meta["slug"] = meta.get("title", "").lower().replace(" ", "-").replace("/", "-")
+        meta["slug"] = _blog_re.sub(r"[^a-z0-9-]", "", meta["slug"])
+    if not meta.get("date"):
+        meta["date"] = _dt.now().strftime("%Y-%m-%d")
+    if not meta.get("excerpt"):
+        # Auto-generate excerpt from first paragraph
+        first_para = body.split("\n\n")[0].strip()
+        meta["excerpt"] = first_para[:200] + ("..." if len(first_para) > 200 else "")
+    meta["body"] = body
+    meta["filepath"] = str(filepath)
+    return meta
+
+def _get_all_blog_posts() -> list[dict]:
+    """Get all blog posts sorted by date (newest first)."""
+    posts = []
+    if not BLOG_DIR.exists():
+        return posts
+    for filepath in BLOG_DIR.glob("*.md"):
+        post = _parse_blog_post(filepath)
+        if post:
+            posts.append(post)
+    posts.sort(key=lambda p: p.get("date", ""), reverse=True)
+    return posts
+
+def _blog_base_html(title: str, content_html: str, extra_head: str = "") -> str:
+    """Generate a blog page with Local-Eye's styling."""
+    return f"""<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>{_xml_escape(title)} — Local-Eye Blog</title>
+<meta name="description" content="Local-Eye Blog — AI agent verification, scam detection, and web trust insights.">
+<meta property="og:title" content="{_xml_escape(title)} — Local-Eye Blog">
+<meta property="og:type" content="article">
+<meta property="og:url" content="https://localeye.co/blog">
+<link rel="icon" href="data:image/svg+xml,<svg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 100 100'><text y='.9em' font-size='90'>👁️</text></svg>">
+{extra_head}
+<style>
+*{{margin:0;padding:0;box-sizing:border-box}}
+body{{font-family:-apple-system,BlinkMacSystemFont,'Segoe UI',sans-serif;background:#0a0a1a;color:#e0e0f0;line-height:1.6}}
+.container{{max-width:800px;margin:0 auto;padding:40px 20px}}
+.blog-header{{text-align:center;padding:40px 0 30px;border-bottom:1px solid #1a1a3a;margin-bottom:40px}}
+.blog-header h1{{font-size:2.2rem;margin-bottom:8px}}
+.blog-header h1 a{{color:#e0e0f0;text-decoration:none}}
+.blog-header h1 a:hover{{color:#22c55e}}
+.blog-header .subtitle{{color:#8890a8;font-size:1rem;margin-top:4px}}
+.blog-nav{{display:flex;gap:16px;justify-content:center;margin-top:16px}}
+.blog-nav a{{color:#22c55e;text-decoration:none;font-size:0.9rem;font-weight:600}}
+.blog-nav a:hover{{text-decoration:underline}}
+.post-list{{list-style:none;padding:0}}
+.post-item{{background:#12122a;border:1px solid #2a2a4a;border-radius:14px;padding:28px;margin-bottom:24px;transition:border-color 0.2s}}
+.post-item:hover{{border-color:#22c55e40}}
+.post-item h2{{font-size:1.5rem;margin-bottom:8px}}
+.post-item h2 a{{color:#e0e0f0;text-decoration:none}}
+.post-item h2 a:hover{{color:#22c55e}}
+.post-meta{{color:#666;font-size:0.85rem;margin-bottom:12px}}
+.post-meta .date{{color:#8890a8}}
+.post-meta .tag{{display:inline-block;background:#1a1a3a;color:#3b82f6;padding:2px 10px;border-radius:12px;font-size:0.75rem;margin-left:8px}}
+.post-excerpt{{color:#a0a8c0;font-size:1rem;line-height:1.7}}
+.post-excerpt a{{color:#22c55e;text-decoration:none;font-weight:600}}
+.post-excerpt a:hover{{text-decoration:underline}}
+.post-full h1{{font-size:2rem;margin-bottom:12px;line-height:1.3}}
+.post-full .post-meta{{margin-bottom:30px;padding-bottom:16px;border-bottom:1px solid #1a1a3a}}
+.post-body{{color:#c0c8d8;font-size:1.05rem;line-height:1.8}}
+.post-body h2{{color:#e0e0f0;font-size:1.5rem;margin:36px 0 16px;padding-top:12px;border-top:1px solid #1a1a3a}}
+.post-body h3{{color:#e0e0f0;font-size:1.2rem;margin:28px 0 12px}}
+.post-body p{{margin:16px 0}}
+.post-body ul,.post-body ol{{margin:16px 0;padding-left:24px}}
+.post-body li{{margin:8px 0}}
+.post-body code{{background:#12122a;color:#22c55e;padding:2px 8px;border-radius:4px;font-family:'SF Mono',Consolas,monospace;font-size:0.9rem}}
+.post-body pre{{background:#12122a;border:1px solid #2a2a4a;border-radius:10px;padding:16px;overflow-x:auto;margin:16px 0}}
+.post-body pre code{{background:none;padding:0}}
+.post-body blockquote{{border-left:3px solid #22c55e;padding-left:20px;margin:20px 0;color:#8890a8;font-style:italic}}
+.post-body strong{{color:#e0e0f0}}
+.post-body em{{color:#a0a8c0}}
+.post-body a{{color:#22c55e;text-decoration:none}}
+.post-body a:hover{{text-decoration:underline}}
+.post-body hr{{border:none;border-top:1px solid #1a1a3a;margin:32px 0}}
+.post-footer{{margin-top:40px;padding-top:24px;border-top:1px solid #1a1a3a;text-align:center}}
+.post-footer a{{color:#22c55e;text-decoration:none;font-weight:600}}
+.post-footer a:hover{{text-decoration:underline}}
+.empty{{text-align:center;padding:60px 20px;color:#555}}
+footer{{text-align:center;padding:40px 0;color:#555;font-size:0.85rem}}
+footer a{{color:#22c55e;text-decoration:none}}
+@media(max-width:600px){{.post-item h2{{font-size:1.3rem}}.post-full h1{{font-size:1.6rem}}}}
+</style>
+</head>
+<body>
+<div class="container">
+<div class="blog-header">
+<h1><a href="/blog">👁️ Local-Eye Blog</a></h1>
+<p class="subtitle">AI agent verification, scam detection, and web trust insights</p>
+<div class="blog-nav">
+<a href="/">← Back to Local-Eye</a>
+<a href="/phone-vet">Scam Phone Checker</a>
+<a href="/phone-verify">Phone Verification Demo</a>
+</div>
+</div>
+{content_html}
+<footer>
+<p>A <a href="https://brandbooststudio.co">BrandBoost Studio</a> product. Built in Beeville, TX on real hardware.</p>
+<p style="margin-top:8px">© 2026 Local-Eye. All rights reserved.</p>
+</footer>
+</div>
+</body>
+</html>"""
+
+@app.get("/blog", response_class=HTMLResponse)
+async def blog_index():
+    """Blog index page — lists all posts with title, date, and excerpt."""
+    posts = _get_all_blog_posts()
+    if not posts:
+        content = '<div class="empty"><p>No blog posts yet. Check back soon.</p></div>'
+    else:
+        items_html = []
+        for post in posts:
+            raw_tags = [t.strip().strip('"').strip("'") for t in post.get("tags", "").strip("[]").split(",") if t.strip().strip('"').strip("'")]
+            tags_html = "".join(
+                f'<span class="tag">{_xml_escape(t)}</span>'
+                for t in raw_tags
+            )
+            items_html.append(f"""
+<li class="post-item">
+<h2><a href="/blog/{_xml_escape(post['slug'])}">{_xml_escape(post['title'])}</a></h2>
+<div class="post-meta"><span class="date">{_xml_escape(post.get('date', ''))}</span>{tags_html}</div>
+<div class="post-excerpt">{_xml_escape(post.get('excerpt', ''))} <a href="/blog/{_xml_escape(post['slug'])}">Read more →</a></div>
+</li>""")
+        content = f'<ul class="post-list">{"".join(items_html)}</ul>'
+    return HTMLResponse(content=_blog_base_html("Blog", content), headers={"Cache-Control": "public, max-age=300"})
+
+@app.get("/blog/{slug}", response_class=HTMLResponse)
+async def blog_post(slug: str):
+    """Individual blog post page — renders markdown as HTML."""
+    # Sanitize slug to prevent path traversal
+    safe_slug = _blog_re.sub(r"[^a-z0-9-]", "", slug.lower())
+    if not safe_slug or safe_slug != slug:
+        raise HTTPException(status_code=404, detail="Post not found")
+    filepath = BLOG_DIR / f"{safe_slug}.md"
+    if not filepath.exists() or not is_safe_path(BLOG_DIR, filepath):
+        raise HTTPException(status_code=404, detail="Post not found")
+    post = _parse_blog_post(filepath)
+    if not post:
+        raise HTTPException(status_code=404, detail="Post not found")
+    # Render markdown to HTML
+    html_body = _md.markdown(post["body"], extensions=["extra", "codehilite", "toc"])
+    raw_tags = [t.strip().strip('"').strip("'") for t in post.get("tags", "").strip("[]").split(",") if t.strip().strip('"').strip("'")]
+    tags_html = "".join(
+        f'<span class="tag">{_xml_escape(t)}</span>'
+        for t in raw_tags
+    )
+    content = f"""
+<article class="post-full">
+<h1>{_xml_escape(post['title'])}</h1>
+<div class="post-meta"><span class="date">{_xml_escape(post.get('date', ''))}</span> by {_xml_escape(post.get('author', 'Local-Eye'))}{tags_html}</div>
+<div class="post-body">
+{html_body}
+</div>
+<div class="post-footer">
+<p><a href="/blog">← Back to all posts</a></p>
+</div>
+</article>"""
+    extra_head = f'''<meta property="og:title" content="{_xml_escape(post['title'])} — Local-Eye Blog">
+<meta property="og:description" content="{_xml_escape(post.get('excerpt', ''))}">
+<meta property="og:type" content="article">'''
+    return HTMLResponse(content=_blog_base_html(post["title"], content, extra_head), headers={"Cache-Control": "public, max-age=600"})
 
 # --- Protected Docs (require API key) ---
 @app.get("/docs", include_in_schema=False)
@@ -678,15 +902,17 @@ async def playground_verify(request: Request, body: VerifyRequest):
     tier = key_data.get("tier", "free")
     limits = TIER_LIMITS.get(tier, TIER_LIMITS["free"])
     
-    if not await check_rate_limit(key_data["key_id"], limits["daily"]):
+    allowed, reason = await check_rate_and_monthly(key_data["key_id"], limits)
+    if not allowed:
+        msg = "Monthly limit reached" if reason == "monthly_limit" else "Daily limit reached"
         raise HTTPException(status_code=429, detail=json.dumps({
-            "error": "playground_limit_reached",
-            "message": "Playground daily limit reached. Get your own free API key for continued use.",
-            "signup_url": "https://brandbooststudio.co/agent-business-suite.html#signup",
+            "error": "rate_limit_exceeded",
+            "message": f"{msg}. Upgrade for more calls.",
+            "upgrade_url": "https://localeye.co/#pricing",
         }))
-    
+
     # SSRF protection
-    blocked, reason = is_url_blocked(body.url)
+    blocked, reason_ssrf = is_url_blocked(body.url)
     if blocked:
         raise HTTPException(status_code=400, detail=json.dumps({
             "error": "url_blocked",
@@ -712,7 +938,85 @@ async def playground_verify(request: Request, body: VerifyRequest):
         
         await log_usage(key_data["key_id"], "playground_verify", body.url, resp.status_code, elapsed)
         
-        # Return simplified response (no HTML content, limited snippet)
+        # Compute scam score server-side
+        scam_score = 70  # Start neutral-leaning-safe
+        flags = []
+        https_valid = body.url.startswith("https://")
+        
+        if not https_valid:
+            scam_score -= 20
+            flags.append("No HTTPS")
+        if resp.status_code >= 400:
+            scam_score -= 25
+            flags.append(f"HTTP {resp.status_code}")
+        elif resp.status_code in (200, 301, 302):
+            scam_score += 5
+        if is_bot_blocked:
+            scam_score -= 10
+            flags.append("Bot detection active")
+        if len(text) < 500:
+            scam_score -= 15
+            flags.append("Very little content")
+        elif len(text) > 1000:
+            scam_score += 5
+        
+        snippet_lower = text[:1500].lower()
+        has_email = bool(__import__("re").search(r'[a-z0-9._%+-]+@[a-z0-9.-]+\.[a-z]{2,}', text[:1500]))
+        has_phone = bool(__import__("re").search(r'\+?\d[\d\s\-().]{7,}\d', text[:1500]))
+        has_address = any(kw in snippet_lower for kw in ['street', ' st,', 'ave', 'blvd', 'road', 'drive', 'suite'])
+        has_contact = has_email or has_phone or has_address
+        if has_contact:
+            scam_score += 10
+        else:
+            scam_score -= 10
+            flags.append("No contact info")
+        
+        has_privacy = 'privacy' in snippet_lower and ('policy' in snippet_lower or 'notice' in snippet_lower)
+        if has_privacy:
+            scam_score += 5
+        else:
+            scam_score -= 5
+            flags.append("No privacy policy")
+        
+        scam_keywords = ['urgent', 'act now', 'limited time', 'wire transfer', 'crypto payment', 
+                          'western union', 'moneygram', 'gift card payment']
+        for kw in scam_keywords:
+            if kw in snippet_lower:
+                scam_score -= 8
+                flags.append(f'"{kw}" detected')
+        
+        legit_signals = ['about us', 'terms of service', 'terms and conditions', 'return policy', 'refund policy', 'customer service']
+        legit_count = sum(1 for s in legit_signals if s in snippet_lower)
+        if legit_count >= 2:
+            scam_score += 10
+        
+        try:
+            from urllib.parse import urlparse as _urlparse
+            hostname = _urlparse(body.url).hostname or ''
+            tld = hostname.split('.')[-1] if '.' in hostname else ''
+            risky_tlds = ['xyz', 'top', 'club', 'site', 'online', 'icu', 'buzz', 'monster']
+            if tld in risky_tlds:
+                scam_score -= 10
+                flags.append(f".{tld} TLD is high-risk")
+            if hostname.count('.') > 3:
+                scam_score -= 5
+                flags.append("Unusual subdomain structure")
+        except Exception:
+            pass
+        
+        if elapsed < 100:
+            scam_score -= 5
+        
+        scam_score = max(0, min(100, scam_score))
+        
+        if scam_score >= 70:
+            verdict = "No major risk indicators found"
+        elif scam_score >= 40:
+            verdict = "Some risk indicators detected — proceed with caution"
+        else:
+            verdict = "Multiple risk indicators detected — high risk"
+        
+        # Return response with scam_score included
         result = {
             "status": "verified" if not is_bot_blocked else "likely_blocked",
             "http_status": resp.status_code,
@@ -723,6 +1027,12 @@ async def playground_verify(request: Request, body: VerifyRequest):
             "response_time_ms": round(elapsed, 1),
             "rendered_on": "residential-ip",
             "tier": "base",
+            "scam_score": scam_score,
+            "verdict": verdict,
+            "flags": flags,
+            "https_valid": https_valid,
+            "has_contact_info": has_contact,
+            "has_privacy_policy": has_privacy,
         }
         return result
     
@@ -757,13 +1067,15 @@ async def playground_phone_vet(request: Request, body: PhoneVetRequest):
     tier = key_data.get("tier", "free")
     limits = TIER_LIMITS.get(tier, TIER_LIMITS["free"])
     
-    if not await check_rate_limit(key_data["key_id"], limits["daily"]):
+    allowed, reason = await check_rate_and_monthly(key_data["key_id"], limits)
+    if not allowed:
+        msg = "Monthly limit reached" if reason == "monthly_limit" else "Daily limit reached"
         raise HTTPException(status_code=429, detail=json.dumps({
-            "error": "playground_limit_reached",
-            "message": "Playground daily limit reached. Get your own free API key for continued use.",
-            "signup_url": "https://brandbooststudio.co/agent-business-suite.html#signup",
+            "error": "rate_limit_exceeded",
+            "message": f"{msg}. Upgrade for more calls.",
+            "upgrade_url": "https://localeye.co/#pricing",
         }))
-    
+
     # Call the main phone_vet logic by constructing a proper call
     start = time.time()
     phone = body.phone.strip()
@@ -1321,10 +1633,12 @@ async def verify_web_presence(
     tier = key_data.get("tier", "free")
     limits = TIER_LIMITS.get(tier, TIER_LIMITS["free"])
 
-    if not await check_rate_limit(key_data["key_id"], limits["daily"]):
+    allowed, reason = await check_rate_and_monthly(key_data["key_id"], limits)
+    if not allowed:
+        msg = "Monthly limit reached" if reason == "monthly_limit" else "Daily limit reached"
         raise HTTPException(status_code=429, detail=json.dumps({
             "error": "rate_limit_exceeded",
-            "message": f"Daily limit reached ({limits['daily']}/day for {tier} tier).",
+            "message": f"{msg} ({limits['daily']}/day, {limits['monthly']}/month for {tier} tier).",
             "upgrade_url": "https://localeye.co/#pricing",
             "pay_per_call": "https://buy.stripe.com/fZu7sL9tD8upfrY5ng2Ji0n",
         }))
@@ -1405,10 +1719,12 @@ async def visual_verify(
         }))
 
     limits = TIER_LIMITS.get(tier, TIER_LIMITS["starter"])
-    if not await check_rate_limit(key_data["key_id"], limits["daily"]):
+    allowed, reason = await check_rate_and_monthly(key_data["key_id"], limits)
+    if not allowed:
+        msg = "Monthly limit reached" if reason == "monthly_limit" else "Daily limit reached"
         raise HTTPException(status_code=429, detail=json.dumps({
             "error": "rate_limit_exceeded",
-            "message": "Daily limit reached",
+            "message": f"{msg}",
             "upgrade_url": "https://localeye.co/#pricing",
             "pay_per_call": "https://buy.stripe.com/fZu7sL9tD8upfrY5ng2Ji0n",
         }))

@@ -100,12 +100,25 @@ async def init_db():
     async with aiosqlite.connect(DB_PATH) as db:
         await db.execute("PRAGMA journal_mode=WAL")
         await db.executescript(CREATE_TABLES)
-        # Idempotent migration: add registration_ip to databases created before
-        # this column existed. SQLite has no "ADD COLUMN IF NOT EXISTS".
+        # Idempotent migrations
         try:
             await db.execute("ALTER TABLE api_keys ADD COLUMN registration_ip TEXT")
         except Exception:
             pass  # Column already exists
+        try:
+            await db.execute("ALTER TABLE api_keys ADD COLUMN key_hash TEXT")
+        except Exception:
+            pass  # Column already exists
+        # Backfill key_hash for existing keys
+        try:
+            async with db.execute("SELECT key_id FROM api_keys WHERE key_hash IS NULL") as cursor:
+                rows = await cursor.fetchall()
+                for row in rows:
+                    h = hash_api_key(row[0])
+                    await db.execute("UPDATE api_keys SET key_hash = ? WHERE key_id = ?", (h, row[0]))
+            await db.commit()
+        except Exception:
+            pass
         await db.commit()
 
 async def create_api_key(email: str, tier: str = "free", stripe_customer_id: str = None, registration_ip: str = None) -> dict:
@@ -121,8 +134,8 @@ async def create_api_key(email: str, tier: str = "free", stripe_customer_id: str
             if existing:
                 return {"key_id": existing[0], "email": email, "tier": existing[1], "existing": True}
         await db.execute(
-            "INSERT INTO api_keys (key_id, email, stripe_customer_id, tier, created_at, registration_ip) VALUES (?, ?, ?, ?, ?, ?)",
-            (key_id, email, stripe_customer_id, tier, created_at, registration_ip),
+            "INSERT INTO api_keys (key_id, email, stripe_customer_id, tier, created_at, registration_ip, key_hash) VALUES (?, ?, ?, ?, ?, ?, ?)",
+            (key_id, email, stripe_customer_id, tier, created_at, registration_ip, hash_api_key(key_id)),
         )
         await db.commit()
     return {"key_id": key_id, "email": email, "tier": tier}
@@ -173,6 +186,31 @@ async def check_rate_limit(key_id: str, daily_limit: int) -> bool:
         )
         await db.commit()
         return cursor.rowcount > 0
+
+
+async def check_monthly_limit(key_id: str, monthly_limit: int) -> bool:
+    """Check if the key is within its monthly API call limit.
+    
+    Returns True if the call is allowed (under limit), False if limit reached.
+    Uses the current calendar month for counting.
+    """
+    if monthly_limit < 0:  # Unlimited
+        return True
+    month_str = time.strftime("%Y-%m")
+    async with aiosqlite.connect(DB_PATH) as db:
+        # Sum all daily usage for this key in the current month
+        async with db.execute(
+            "SELECT COALESCE(SUM(count), 0) FROM daily_usage WHERE key_id = ? AND date LIKE ?",
+            (key_id, f"{month_str}%"),
+        ) as cursor:
+            row = await cursor.fetchone()
+            monthly_used = row[0] if row else 0
+    return monthly_used < monthly_limit
+
+
+def hash_api_key(key_id: str) -> str:
+    """Hash an API key using SHA-256 for secure storage."""
+    return hashlib.sha256(key_id.encode()).hexdigest()
 
 async def log_usage(key_id: str, endpoint: str, url: str, status_code: int, response_time_ms: float):
     async with aiosqlite.connect(DB_PATH) as db:

@@ -1,0 +1,130 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>Privacy Policy — Local-Eye API</title>
+<meta name="description" content="Local-Eye API privacy policy. What we collect, why, and how we protect it.">
+<link rel="icon" href="data:image/svg+xml,<svg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 100 100'><text y='.9em' font-size='90'>👁️</text></svg>">
+<style>
+*{margin:0;padding:0;box-sizing:border-box}
+body{font-family:-apple-system,BlinkMacSystemFont,'Segoe UI',sans-serif;background:#0a0a1a;color:#e0e0f0;line-height:1.7}
+.container{max-width:760px;margin:0 auto;padding:60px 20px 80px}
+h1{font-size:2rem;margin-bottom:8px;background:linear-gradient(135deg,#22c55e,#3b82f6);-webkit-background-clip:text;-webkit-text-fill-color:transparent}
+.subtitle{color:#8890a8;margin-bottom:40px;font-size:0.95rem}
+h2{font-size:1.3rem;margin:36px 0 12px;color:#22c55e}
+h3{font-size:1.1rem;margin:24px 0 8px;color:#e0e0f0}
+p{margin-bottom:16px;color:#a0a8c0;font-size:0.95rem}
+ul{margin:0 0 16px 24px;color:#a0a8c0;font-size:0.95rem}
+li{margin-bottom:6px}
+strong{color:#e0e0f0}
+.code{background:#12122a;border:1px solid #2a2a4a;border-radius:8px;padding:12px 16px;font-family:'SF Mono',Consolas,monospace;font-size:0.85rem;color:#22c55e;margin:12px 0 16px;overflow-x:auto}
+a{color:#22c55e;text-decoration:none}
+a:hover{text-decoration:underline}
+.updated{color:#555;font-size:0.85rem;margin-top:40px;padding-top:20px;border-top:1px solid #2a2a4a}
+.back{display:inline-block;margin-bottom:30px;color:#8890a8;font-size:0.9rem}
+.back:hover{color:#22c55e}
+</style>
+</head>
+<body>
+<div class="container">
+<a href="/" class="back">← Back to Local-Eye</a>
+
+<h1>Privacy Policy</h1>
+<p class="subtitle">Last updated: June 16, 2026</p>
+
+<p>Local-Eye API ("Local-Eye", "we", "us") operates the website <a href="https://localeye.co">localeye.co</a> and the API at <a href="https://api.localeye.co">api.localeye.co</a>. This policy explains what data we collect, why, and how we handle it.</p>
+
+<h2>Chrome Extension</h2>
+<p>The Local-Eye Chrome Extension ("Scam Shield") additionally collects:</p>
+<ul>
+<li><strong>Current page URL</strong> — sent to our API only when you click "Verify This Site" (never automatically on the free tier)</li>
+<li><strong>Playground tokens</strong> — temporary session tokens for rate limiting, expire after 1 hour</li>
+<li><strong>Daily check count</strong> — stored locally in your browser, reset at midnight</li>
+</ul>
+<p>The extension does <strong>not</strong> automatically send URLs or track browsing history. On the free tier, checks are initiated by you. The Pro tier's "Background Protection" feature checks new pages only after you explicitly enable it.</p>
+
+<h2>What We Collect</h2>
+
+<h3>Account Information</h3>
+<p>When you sign up, we collect:</p>
+<ul>
+<li><strong>Email address</strong> — used for account identification and important notifications</li>
+<li><strong>API key</strong> — automatically generated for API authentication</li>
+<li><strong>Signup IP address</strong> — used for abuse prevention and rate limiting</li>
+</ul>
+
+<h3>API Usage Data</h3>
+<p>When you make API calls, we log:</p>
+<ul>
+<li><strong>Endpoint called</strong> — which API method you used</li>
+<li><strong>Timestamp</strong> — when the call was made</li>
+<li><strong>Response status code</strong> — success or error</li>
+<li><strong>Response time</strong> — for performance monitoring</li>
+</ul>
+
+<p><strong>We do <em>not</em> permanently store the full content of API responses.</strong> Response content is held in memory during request processing and discarded afterward. We retain only the metadata listed above.</p>
+
+<h3>URLs You Submit</h3>
+<p>When using our verification endpoints, you provide URLs for us to check. We process these in real-time on a residential IP and return the results to you. We do not build a database of URLs checked by users.</p>
+
+<h3>Phone Numbers You Submit</h3>
+<p>Our phone verification endpoint calls phone numbers you provide. We log the call outcome (answered, voicemail, scam detected) for the purpose of returning results to you. We do not retain call recordings or transcripts beyond 30 days.</p>
+
+<h2>Why We Collect This Data</h2>
+<ul>
+<li><strong>Abuse prevention</strong> — Rate limiting, fraud detection, and protecting the service from misuse</li>
+<li><strong>Service improvement</strong> — Understanding usage patterns to build better features</li>
+<li><strong>Billing</strong> — Tracking API usage against tier limits</li>
+<li><strong>Security</strong> — Detecting and responding to unauthorized access</li>
+</ul>
+
+<h2>Data Retention</h2>
+<ul>
+<li><strong>Account data</strong> — Retained until you delete your account</li>
+<li><strong>API usage logs</strong> — Retained for 90 days, then aggregated into anonymous statistics</li>
+<li><strong>Phone verification results</strong> — Retained for 30 days, then deleted</li>
+<li><strong>Sign-up IP addresses</strong> — Retained for abuse prevention; deleted with your account</li>
+</ul>
+
+<h2>Data Sharing</h2>
+<p>We do not sell, rent, or share your personal data with third parties. We may share data only:</p>
+<ul>
+<li>With your explicit consent</li>
+<li>To comply with legal obligations</li>
+<li>To protect our service from fraud or abuse</li>
+</ul>
+
+<h2>Security</h2>
+<p>We take reasonable measures to protect your data, including:</p>
+<ul>
+<li>All API traffic is encrypted via HTTPS/TLS</li>
+<li>API keys are hashed — we cannot retrieve your original key if lost</li>
+<li>Database access is restricted to authorized systems</li>
+<li>Infrastructure runs on isolated, regularly patched servers</li>
+</ul>
+
+<h2>Your Rights</h2>
+<ul>
+<li><strong>Access</strong> — You can request a copy of your data at any time</li>
+<li><strong>Deletion</strong> — You can delete your account and all associated data by emailing <a href="mailto:support@localeye.co">support@localeye.co</a></li>
+<li><strong>Data portability</strong> — You can export your usage data in JSON format</li>
+</ul>
+
+<h2>Third-Party Services</h2>
+<p>Local-Eye uses the following third-party services:</p>
+<ul>
+<li><strong>Cloud infrastructure</strong> — For hosting and API delivery</li>
+<li><strong>Payment processing</strong> — Stripe (we never see your full card number)</li>
+</ul>
+
+<h2>Changes to This Policy</h2>
+<p>We may update this policy from time to time. Material changes will be communicated via email to registered users. Continued use of the API after changes constitutes acceptance.</p>
+
+<h2>Contact</h2>
+<p>Questions about this policy? Reach us at <a href="mailto:support@localeye.co">support@localeye.co</a></p>
+
+<p class="updated">Effective date: June 16, 2026 · Local-Eye API — a <a href="https://brandbooststudio.co">BrandBoost Studio</a> product</p>
+</div>
+</body>
+</html>
